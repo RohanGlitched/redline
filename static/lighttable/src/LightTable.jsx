@@ -317,6 +317,8 @@ export default function LightTable() {
           // someone else saved in between: take their decisions, then let this reviewer carry on. A save queued
           // meanwhile would send the old decisions on top of theirs: it is dropped, and the merged state saves next
           pending.current = false;
+          // their decisions replace this reviewer's unsaved ones, signatures included: nothing is left to stamp
+          signedNow.current.clear(); confirmedNow.current.clear();
           versionRef.current = out.review.version || 0;
           setDecisions(out.review.decisions || {}); setMarkDecisions(out.review.markDecisions || {});
           setSaved('Someone else just saved this review; their decisions are loaded');
