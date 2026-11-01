@@ -370,7 +370,7 @@ test('a PDF attached after the reviewed revision that Redline cannot place holds
 });
 
 // ---------- who signed what (the server's rules) ----------
-import { settleSignatures } from '../shared/review.mjs';
+import { settleSignatures, carriedChanges } from '../shared/review.mjs';
 const alice = { accountId: 'a', displayName: 'Alice' }, bob = { accountId: 'b', displayName: 'Bob' };
 const notesV1 = [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.5' }], notesV2 = [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.7' }];
 
@@ -428,4 +428,18 @@ test('a signature for note words the reviewer never saw is not taken, and the no
   const notes = [{ n: 2, text: 'Zone B4: add hole Ø8 thru' }];
   settleSignatures(d2, { beforeOf: () => undefined, notes, signed: ['note2'], shown: { note2: 'Update the parts list supplier' }, me: alice, now: 't2', stale: [] });
   assert.equal(d2.note2.signedBy, undefined);
+});
+
+test('a change sent back on C to D still holds when revision E arrives, until someone says E fixes it', () => {
+  const previous = { revA: { id: 1, filename: 'BRKT_rev-C.pdf' }, revB: { id: 2, filename: 'BRKT_rev-D.pdf' },
+    clouds: [{ id: 's1-c1', zone: 'D2' }, { id: 's1-c2', zone: 'C3' }],
+    decisions: { 's1-c1': { status: 'declared', note: 1, signedBy: 'Asha' }, 's1-c2': { status: 'rejected' } } };
+  const carried = carriedChanges(previous, { id: 2 });
+  assert.deepEqual(carried.map((c) => c.id), ['k-s1-c2']);
+  assert.equal(carried[0].carried.was, 'sent back');
+  // the D to E review found nothing new, but the carried change holds
+  assert.equal(gateOf(carried, { __ack: { status: 'ack', signedBy: 'Asha' } }).blocked, true);
+  assert.equal(gateOf(carried, { 'k-s1-c2': { status: 'accepted', signedBy: 'Asha' } }).blocked, false);
+  // nothing is carried into a pair that does not continue the previous one
+  assert.deepEqual(carriedChanges(previous, { id: 9 }), []);
 });

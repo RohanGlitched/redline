@@ -74,3 +74,27 @@ export function settleSignatures(decisions, { beforeOf, notes = [], signed = [],
   }
   return stamped;
 }
+
+// Changes carried from the previous pair of revisions. When revision E arrives after a review of C to D, every change of
+// that review that was sent back or never answered comes along to the D to E review: the drafter may have fixed the
+// value but not the moved hole, and D to E would not show a hole that is in both D and E. A carried change stays open
+// until someone says by name that this revision fixes it, or sends it back again.
+export function carriedChanges(previous, revA) {
+  if (!previous || +previous.revB?.id !== +revA?.id) return [];
+  const open = (c) => { const d = previous.decisions?.[c.id] || {}; return d.status === 'rejected' || !(d.status === 'declared' || d.status === 'accepted'); };
+  return (previous.clouds || []).filter((c) => !c.carried || open(c)).filter(open).map((c, i) => ({
+    ...c, id: `k-${c.id.replace(/^k-/, '')}`, n: `K${i + 1}`,
+    carried: { from: previous.revA?.filename, to: previous.revB?.filename, was: previous.decisions?.[c.id]?.status === 'rejected' ? 'sent back' : 'not answered' },
+  }));
+}
+
+// Notes carried out on the previous pair of revisions: declared there, signed, against the same words. A D to E review
+// does not show changes made from C to D, so those notes are done, not missing from the drawing.
+export function notesDoneBefore(previous, revA) {
+  if (!previous || +previous.revB?.id !== +revA?.id) return [];
+  const done = new Map((previous.notesDone || []).map((x) => [x.n, x]));
+  for (const d of Object.values(previous.decisions || {})) {
+    if (d.status === 'declared' && d.signedBy && d.noteText != null) done.set(d.note, { n: d.note, noteText: d.noteText });
+  }
+  return [...done.values()];
+}

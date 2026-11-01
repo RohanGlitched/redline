@@ -38,11 +38,12 @@ export const valueOkFor = (d, note) => !!d?.valueOk && (d.valueOk.noteText == nu
 export const slipOf = (cloud, noteText) => valueSlip(cloud, noteText).length + noteSlip(cloud, noteText).length > 0;
 
 export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, sheets = null, notes = null, extra = {}) {
-  let open = 0, unsigned = 0, rejected = 0, mismatched = 0, noteChanged = 0;
+  let open = 0, unsigned = 0, rejected = 0, mismatched = 0, noteChanged = 0, carriedOpen = 0;
   for (const c of clouds) {
     const d = decisions[c.id] || {};
     const note = d.status === 'declared' && notes ? notes.find((n) => n.n === d.note) : null;
     if (d.status === 'rejected') rejected++;
+    else if (c.carried && d.status !== 'declared' && d.status !== 'accepted') carriedOpen++;
     else if (d.status !== 'declared' && d.status !== 'accepted') open++;
     else if (d.status === 'declared' && notes && !note) open++;
     // a signature is for the note as it read when signed: a rewritten (or renumbered) note needs signing again
@@ -58,18 +59,20 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   const unmet = notes?.length && (!sheets || sheets.count <= 1 || new Set(sheets.done || []).size >= sheets.count)
     ? notes.filter((nt) => {
       if (clouds.some((c) => decisions[c.id]?.status === 'declared' && decisions[c.id]?.note === nt.n)) return false;
+      if ((extra.notesDone || []).some((x) => x.n === nt.n && x.noteText === noteKey(nt.text))) return false;
       const x = decisions[`note${nt.n}`];
       return !(x?.signedBy && (x.noteText == null || x.noteText === noteKey(nt.text)));
     }).length : 0;
   const needsAck = !clouds.length || (extra.setAside || 0) > 0;
   const ack = decisions.__ack;
   const unconfirmed = needsAck && (!ack?.signedBy || (ack.asideCount != null && (extra.setAside || 0) > ack.asideCount)) ? 1 : 0;
-  const blocked = open + unsigned + rejected + mismatched + markups + unseen + noteChanged + unconfirmed + unmet > 0;
+  const blocked = open + carriedOpen + unsigned + rejected + mismatched + markups + unseen + noteChanged + unconfirmed + unmet > 0;
   // every reason the release is held, most serious first, so the verdict never hides a second problem
   const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   const parts = [
     unseen && `${unseen} of ${sheets.count} sheets ${unseen === 1 ? 'is' : 'are'} not compared yet`,
     rejected && `${n(rejected, 'change was', 'changes were')} sent back to the drafter`,
+    carriedOpen && `${n(carriedOpen, 'change left open on the previous revisions is', 'changes left open on the previous revisions are')} not confirmed fixed`,
     open && `${n(open, 'change on the drawing is', 'changes on the drawing are')} not in the change notes`,
     mismatched && `${n(mismatched, 'declared change shows a value its change note does not', 'declared changes show values their change notes do not')}`,
     markups && `${n(markups, 'pen markup on the print needs', 'pen markups on the print need')} an answer`,
@@ -85,6 +88,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   const reasons = [
     unseen && { kind: 'unseen', n: unseen, short: `${unseen} ${unseen === 1 ? 'sheet' : 'sheets'} not compared` },
     rejected && { kind: 'rejected', n: rejected, short: `${rejected} sent back` },
+    carriedOpen && { kind: 'carried', n: carriedOpen, short: `${carriedOpen} left open before` },
     open && { kind: 'open', n: open, short: `${open} not in the notes` },
     mismatched && { kind: 'mismatched', n: mismatched, short: `${mismatched} ${mismatched === 1 ? 'value differs' : 'values differ'} from the note` },
     markups && { kind: 'markups', n: markups, short: `${markups} pen ${markups === 1 ? 'markup' : 'markups'} to answer` },
@@ -93,7 +97,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     unconfirmed && { kind: 'ack', n: 1, short: !clouds.length ? 'confirm no differences' : 'confirm what was set aside' },
     unmet && { kind: 'unmet', n: unmet, short: `${unmet} ${unmet === 1 ? 'note' : 'notes'} not on the drawing` },
   ].filter(Boolean);
-  return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, noteChanged, unconfirmed, unmet, text, parts, reasons };
+  return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, noteChanged, unconfirmed, unmet, carriedOpen, text, parts, reasons };
 }
 
 // The release verdict for one work item, from its PDF attachments and the review in app storage. The
@@ -146,5 +150,5 @@ export function verdictOf(attachments, review, notes = null) {
   if (photos.length && +review.print?.id !== +photos[photos.length - 1].id) {
     return { blocked: true, text: 'the newest photo of a marked-up print has not been read on the light table' };
   }
-  return gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {}, review.sheets, notes, { setAside: (review.setAside || []).length });
+  return gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {}, review.sheets, notes, { setAside: (review.setAside || []).length, notesDone: review.notesDone });
 }

@@ -2,7 +2,7 @@
 // tied to a change-note line or held as undeclared, and the release gate that follows from it.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, closeModal, getFocus, openInNewTab } from './bridge.js';
-import { matchChanges, overlap } from '../../../shared/review.mjs';
+import { matchChanges, overlap, carriedChanges, notesDoneBefore } from '../../../shared/review.mjs';
 import { revisionOfName } from './engine/titleblock.mjs';
 import { meaningOf } from './engine/meaning.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
@@ -288,10 +288,22 @@ export default function LightTable() {
   };
 
   // Autosave the review. The backend keeps it in app storage, which the release validator reads.
-  const allClouds = useMemo(() => Object.values(sheets.compared).flat(), [sheets]);
+  // changes the previous pair of revisions left open (sent back, or never answered), carried into this review
+  const carried = useMemo(() => {
+    const rv = order?.review;
+    if (!rv || !res) return [];
+    if (+rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id) return (rv.clouds || []).filter((c) => c.carried);
+    return carriedChanges(rv, res.revA);
+  }, [order, res?.revA?.id, res?.revB?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allClouds = useMemo(() => [...Object.values(sheets.compared).flat(), ...carried], [sheets, carried]);
+  const notesDone = useMemo(() => {
+    const rv = order?.review;
+    if (!rv || !res) return [];
+    return +rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id ? rv.notesDone || [] : notesDoneBefore(rv, res.revA);
+  }, [order, res?.revA?.id, res?.revB?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => {
-    const g = gateOf(allClouds, decisions, [...marks, ...earlierMarks], markDecisions, sheetInfo, order?.notes, { setAside: Object.values(aside).flat().length });
+    const g = gateOf(allClouds, decisions, [...marks, ...earlierMarks], markDecisions, sheetInfo, order?.notes, { setAside: Object.values(aside).flat().length, notesDone });
     const images = order?.images || [];
     const newest = images[images.length - 1];
     const photoOk = !newest || ((print?.status === 'done' || print?.status === 'aside') && String(print.att?.id) === String(newest.id));
@@ -299,7 +311,7 @@ export default function LightTable() {
     if (newerPdfs.length) g.reasons = [...(g.reasons || []), { kind: 'pdf', short: `${newerPdfs.length} newer PDF not compared` }], g.blocked = true, g.text = [g.parts?.length ? g.text : null, `${newerPdfs.map((a) => a.filename).join(', ')} attached after the reviewed revision`].filter(Boolean).join('; ');
     const why = !newest || photoOk ? null : !print || print.status === 'reading' ? 'photo not read yet' : print.status === 'error' ? 'photo could not be read: set it aside' : 'newest photo not read';
     return why ? { ...g, blocked: true, reasons: [...(g.reasons || []), { kind: 'photo', short: why }], text: [g.parts?.length ? g.text : null, `the ${why}`].filter(Boolean).join('; ') } : g;
-  }, [allClouds, decisions, marks, earlierMarks, markDecisions, sheets, order, print, aside]);
+  }, [allClouds, decisions, marks, earlierMarks, markDecisions, sheets, order, print, aside, notesDone]);
   // Saves go one at a time: a decision made while a save is on its way waits for it, then saves with
   // the new version, so two quick decisions never look like someone else saving in between.
   const saving = useRef(false), pending = useRef(false);
@@ -321,7 +333,7 @@ export default function LightTable() {
           shown: Object.fromEntries([...sentSigned, ...sentConfirmed].map(([id, v]) => [id, v.shown]).filter(([, t]) => t != null)), review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
-          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly })),
+          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly, carried: cr }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly, carried: cr })),
           sheets: sheetInfo,
           setAside: Object.values(aside).flat().slice(0, 300).map(({ id, sheet: sh, zone, x0, y0, x1, y1, match }) => ({ id, sheet: sh, zone, box: [x0, y0, x1, y1], match })),
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
@@ -769,6 +781,7 @@ function Ledger({ earlierMarks = [], res, order, decisions, sel, phase, gate, sh
           ))}
         </ul>
         <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
+        <Carried list={allClouds.filter((c) => c.carried)} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <SetAside list={aside[res.sheet] || []} showing={showAside} onShow={onShowAside} onCountBack={onCountBack} readOnly={order.canEdit === false} />
         <OtherPdfs list={(order.otherPdfs || []).filter((a) => Date.parse(a.created) > Date.parse(res.revB.created || 0) || +a.id > +res.revB.id)} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <Confirm gate={gate} d={decisions.__ack || {}} asideCount={Object.values(aside || {}).flat().length} revs={[res.revA, res.revB]} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
@@ -935,6 +948,35 @@ function priorDecisions(review, clouds, sheetNo) {
 
 // What the engine set aside: line work that a re-export nudged by under 0.7 mm and that matches once
 // shifted. Not counted as changes, but never hidden: each one can be shown on the sheet and counted back in.
+// Changes the previous pair of revisions left open. Each is answered here: this revision fixes it (accepted, then
+// signed), or it is sent back again.
+function Carried({ list, decisions, onDecide, onSign, readOnly }) {
+  if (!list.length) return null;
+  return (
+    <div className="rl-confirm rl-carried">
+      <p><b>Left open on the previous revisions</b>: a change sent back or never answered there stays open until someone says this revision fixes it.</p>
+      <ul className="rl-other-pdfs">
+        {list.map((c) => {
+          const d = decisions[c.id] || {};
+          return (
+            <li key={c.id}>
+              <span><b>{c.n}</b> Zone {c.zone}: {c.carried.was} on {c.carried.from} to {c.carried.to}{c.after ? ` ("${c.after}")` : ''}</span>
+              {d.status === 'accepted' ? (d.signedBy ? <em> fixed in this revision, signed by {d.signedBy}</em>
+                : !readOnly && <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>)
+                : d.status === 'rejected' ? <em> sent back again</em>
+                : !readOnly && <span className="rl-choices">
+                  <button className="rl-btn quiet" onClick={() => onDecide(c.id, { status: 'accepted' })}>Fixed in this revision</button>
+                  <button className="rl-btn quiet" onClick={() => onDecide(c.id, { status: 'rejected' })}>Still wrong: send back</button>
+                </span>}
+              {!readOnly && d.status && <> <button className="link" onClick={() => onDecide(c.id, { status: 'open', signedBy: null, signedAt: null })}>Undo</button></>}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // Other PDFs on the work item (an ECO form, a test report): not compared, and set aside by name so the release
 // gate knows someone looked at them.
 function OtherPdfs({ list, decisions, onDecide, onSign, readOnly }) {

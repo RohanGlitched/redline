@@ -3,7 +3,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
-import { ENGINE_VERSION, matchChanges, sameReview, settleSignatures } from '../shared/review.mjs';
+import { ENGINE_VERSION, matchChanges, sameReview, settleSignatures, carriedChanges, notesDoneBefore } from '../shared/review.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
 
 export { verdictOf, notesFromAdf };
@@ -171,6 +171,12 @@ resolver.define('saveReview', async (req) => {
   // an earlier comparison found, and what was found about a change (its box, text and values) stays as
   // first recorded, so a review cannot be emptied or softened after the fact.
   // A re-read (above) replaces the old changes with the ones the current engine found, and the audit log says so.
+  // what the previous pair of revisions left open comes along, whatever the browser sent
+  if (!sameRevs && stored) {
+    const ids = new Set((r.clouds || []).map((c) => c.id));
+    r.clouds = [...(r.clouds || []), ...carriedChanges(stored, r.revA).filter((c) => !ids.has(c.id))];
+    r.notesDone = notesDoneBefore(stored, r.revA);
+  } else if (sameRevs) r.notesDone = stored.notesDone || [];
   if (sameRevs && !reread) {
     const was = new Map((stored.clouds || []).map((c) => [c.id, c]));
     const ids = new Set((r.clouds || []).map((c) => c.id));
@@ -188,7 +194,7 @@ resolver.define('saveReview', async (req) => {
     r.marks = [...(r.marks || []), ...keep];
     r.markDecisions = { ...Object.fromEntries(keep.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v)), ...(r.markDecisions || {}) };
   }
-  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes, { setAside: (r.setAside || []).length });
+  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes, { setAside: (r.setAside || []).length, notesDone: r.notesDone });
   // who answered each pen markup, and who set a photo aside, as Jira names them
   for (const [id, m] of Object.entries(r.markDecisions || {})) {
     if (m.status === 'raising') m.status = 'open';

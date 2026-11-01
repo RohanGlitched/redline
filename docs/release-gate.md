@@ -10,7 +10,8 @@ Redline adds a workflow validator called **Redline drawing release gate**. Put i
 - a review that found nothing, or that set line work aside as re-plot shifts, has been confirmed by name;
 - the newest photo of a marked-up print has been read on the light table (or set aside as not a print), and every red-pen markup on it, and any still unanswered on an earlier photo that is still attached, is raised as a work item, covered by a change, or dismissed;
 - any PDF attached after the reviewed revision that is not named as a revision of this drawing has been set aside by name (a real new revision should be named like the others, so Redline compares it);
-- only one drawing's revisions are attached: two different drawings, each with revisions, belong on two change orders.
+- only one drawing's revisions are attached: two different drawings, each with revisions, belong on two change orders;
+- when a further revision arrives (rev E after a review of C to D), every change that review sent back or left unanswered is carried into the D to E review and holds the release until someone says, by name, that the new revision fixes it.
 
 ## Add the validator (company-managed project)
 
@@ -77,6 +78,6 @@ Redline reads the work item, its attachments and its description as the person u
 Redline needs the released PDFs on the change order, named as revisions of one drawing (for example `BRKT-0142_rev-C.pdf` and `BRKT-0142_rev-D.pdf`; "Rev D", "rev-d" and "RevD1" read the same). Teams whose CAD lives in SolidWorks PDM, Autodesk Vault or a PLM usually already publish a PDF when a revision is released. Two ways to get it onto the change order without anyone downloading and re-uploading:
 
 - **Email to Jira:** set the vault's release notification (or a publish task) to email the PDF to the project's incoming mail address with the change order's key in the subject; Jira attaches it to that work item.
-- **Jira Automation:** an incoming-webhook rule receives the vault's release event and adds the PDF as an attachment to the work item named in the payload.
+- **A small publish script:** the vault's release step calls Jira's REST attachments endpoint (`POST /rest/api/3/issue/{key}/attachments`) with the PDF and the change order's key. Jira Automation's built-in actions do not attach files, so a script or email is the dependable route.
 
 Either way the update trigger notices the new revision, marks the change order "not compared yet" in search, and the gate holds the release until someone compares the revisions in the light table.
