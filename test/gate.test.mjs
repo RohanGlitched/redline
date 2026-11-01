@@ -1,7 +1,7 @@
 // Unit tests for the release verdict and change-note parsing. Run with: npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateOf, verdictOf, valueSlip, numbersIn } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 const pdf = (id, created) => ({ id: String(id), mimeType: 'application/pdf', created });
@@ -42,7 +42,7 @@ test('a multi-sheet drawing blocks until every sheet is compared', () => {
   const g = gateOf([], {}, [], {}, { count: 3, done: [1, 2] });
   assert.equal(g.unseen, 1);
   assert.match(g.text, /1 of 3 sheets is not compared yet/);
-  assert.equal(gateOf([], {}, [], {}, { count: 3, done: [1, 2, 3] }).blocked, false);
+  assert.equal(gateOf([], { __ack: { status: 'ack', signedBy: 'Asha' } }, [], {}, { count: 3, done: [1, 2, 3] }).blocked, false);
 });
 
 test('a work item without two drawings is not a drawing change', () => {
@@ -54,7 +54,7 @@ test('two drawings with no review block release', () => {
 });
 
 test('a revision attached after the review blocks release', () => {
-  const review = { revA: { id: 10 }, revB: { id: 11 }, clouds: [], decisions: {} };
+  const review = { revA: { id: 10 }, revB: { id: 11 }, clouds: [], decisions: { __ack: { status: 'ack', signedBy: 'Asha' } } };
   assert.equal(verdictOf([C, D], review).blocked, false);
   const v = verdictOf([C, D, E], review);
   assert.equal(v.blocked, true);
@@ -62,7 +62,7 @@ test('a revision attached after the review blocks release', () => {
 });
 
 test('removing a reviewed drawing blocks release', () => {
-  const review = { revA: { id: 10 }, revB: { id: 11 }, clouds: [], decisions: {} };
+  const review = { revA: { id: 10 }, revB: { id: 11 }, clouds: [], decisions: { __ack: { status: 'ack', signedBy: 'Asha' } } };
   assert.match(verdictOf([D], review).text, /removed/);
 });
 
@@ -89,7 +89,7 @@ test('change notes come from ordered lists and numbered paragraphs', () => {
 
 test('a photo attached after the review blocks release until it is read or set aside', () => {
   const photo = { id: '20', mimeType: 'image/jpeg', created: '2026-11-02T10:00:00Z' };
-  const review = { revA: { id: 10 }, revB: { id: 11 }, clouds: [], decisions: {} };
+  const review = { revA: { id: 10 }, revB: { id: 11 }, clouds: [], decisions: { __ack: { status: 'ack', signedBy: 'Asha' } } };
   assert.match(verdictOf([C, D, photo], review).text, /newest photo/);
   assert.equal(verdictOf([C, D, photo], { ...review, print: { id: 20 } }).blocked, false);
   assert.equal(verdictOf([C, D, photo], { ...review, print: { id: 20, setAside: true } }).blocked, false);
@@ -243,4 +243,47 @@ test('symbol and ligature variants read the same', () => {
 
 test('numbered screw threads are threads too', () => {
   assert.deepEqual(meaningOf('#10-32 UNF', '#8-32 UNC').map((m) => m.text), ['Thread changed: #10-32 UNF to #8-32 UNC']);
+});
+
+test('a sign-off is for the note as it read: a rewritten note needs signing again', () => {
+  const c = [{ id: 'c1', values: [] }];
+  const d = { c1: { status: 'declared', note: 1, signedBy: 'Asha', noteText: 'Zone D2: bore Ø25 becomes Ø25.5' } };
+  assert.equal(gateOf(c, d, [], {}, null, [{ n: 1, text: 'Zone D2:  bore Ø25 becomes Ø25.5' }]).blocked, false); // spacing only
+  const g = gateOf(c, d, [], {}, null, [{ n: 1, text: 'Zone B5: delete the weld symbol' }]);
+  assert.equal(g.blocked, true);
+  assert.equal(g.noteChanged, 1);
+});
+
+test('a review that found nothing, or set line work aside, clears only once someone confirms it by name', () => {
+  assert.equal(gateOf([], {}).blocked, true);
+  assert.equal(gateOf([], { __ack: { status: 'ack', signedBy: 'Asha' } }).blocked, false);
+  const c = [{ id: 'c1' }], d = { c1: { status: 'accepted', signedBy: 'Asha' } };
+  assert.equal(gateOf(c, d).blocked, false);
+  assert.equal(gateOf(c, d, [], {}, null, null, { setAside: 3 }).blocked, true);
+  assert.equal(gateOf(c, { ...d, __ack: { status: 'ack', signedBy: 'Asha' } }, [], {}, null, null, { setAside: 3 }).blocked, false);
+});
+
+test('inch values read the same with or without a leading zero', () => {
+  assert.deepEqual(valueSlip({ values: [0.257] }, 'Hole .257 becomes 0.257 DIA'), []);
+  assert.deepEqual(numbersIn('.257'), [0.257]);
+});
+
+test('two different drawings on one change order block release', () => {
+  const pdf = (id, filename) => ({ id, filename, mimeType: 'application/pdf', created: `2026-11-02T0${id % 10}:00:00Z` });
+  assert.equal(drawingOf('BRKT-0142_rev-D.pdf'), 'brkt-0142');
+  assert.equal(drawingOf('invoice.pdf'), null);
+  const v = verdictOf([pdf(1, 'BRKT-0142_rev-C.pdf'), pdf(2, 'BRKT-0142_rev-D.pdf'), pdf(3, 'HSG-0207_rev-A.pdf'), pdf(4, 'HSG-0207_rev-B.pdf')], null);
+  assert.equal(v.blocked, true);
+  assert.match(v.text, /2 different drawings/);
+});
+
+test('text split into different runs is still compared', () => {
+  const a = [{ str: 'BORE Ø25 ±0.15 THRU', x0: 0, y0: 0, x1: 90, y1: 10 }];
+  const b = [{ str: 'BORE', x0: 0, y0: 0, x1: 20, y1: 10 }, { str: 'Ø25', x0: 22, y0: 0, x1: 40, y1: 10 }, { str: '±0.16', x0: 42, y0: 0, x1: 66, y1: 10 }, { str: 'THRU', x0: 68, y0: 0, x1: 90, y1: 10 }];
+  assert.equal(bothReadable(a, b), true);
+});
+
+test('a review document is not a drawing revision', () => {
+  assert.equal(drawingOf('design-review.pdf'), null);
+  assert.equal(drawingOf('HSG-0207 Rev 3.pdf'), 'hsg-0207');
 });

@@ -365,3 +365,8 @@ button { font: inherit; color: inherit; }
   .rl-found { padding-top: 10px; }
 }
 .rl-needs .what.ready { color: var(--rl-success-text); font-weight: 600; }
+
+/* one named confirmation for what the engine set aside, or for finding nothing */
+.rl-confirm { margin: 10px 0 0; padding: 10px 12px; border: 1px dashed var(--rl-border); border-radius: 6px; font-size: 13px; color: var(--rl-subtle); }
+.rl-confirm p { margin: 0 0 8px; } .rl-confirm.done p { margin: 0; }
+.rl-confirm b { color: var(--rl-text); }

@@ -95,7 +95,7 @@ export default function Panel() {
                 const label = d.status === 'rejected' ? 'Sent back' : slip ? `Value not in note ${d.note}` : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
                 return [...head, (
                   <li key={c.id} className={st}>
-                    <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Open change ${c.n} in the light table`}>
+                    <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Change ${c.n}, zone ${c.zone}: ${label}${d.signedBy ? `, signed off by ${d.signedBy}` : ''}. Open it in the light table`}>
                       <span className="delta">{c.n}</span>
                       <span className="zone">{c.zone}</span>
                       <span className="lab">{label}</span>

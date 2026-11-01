@@ -3,7 +3,7 @@
 // never trusts a verdict sent by a browser.
 
 // Numbers written in a piece of text: "Ø25.6 ±0.15" gives [25.6, 0.15].
-export const numbersIn = (s) => [...String(s || '').matchAll(/\d+(?:[.,]\d+)?/g)].map((m) => parseFloat(m[0].replace(',', '.')));
+export const numbersIn = (s) => [...String(s || '').matchAll(/\d*[.,]?\d+/g)].map((m) => parseFloat(m[0].replace(',', '.')));
 
 // A declared change whose drawing text carries a value its change note does not mention: the note says
 // Ø25.5 and the drawing says Ø25.6. Returns the values the note is missing (empty when they agree).
@@ -13,13 +13,21 @@ export function valueSlip(cloud, noteText) {
   return cloud.values.filter((v) => !said.has(v));
 }
 
-export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, sheets = null, notes = null) {
-  let open = 0, unsigned = 0, rejected = 0, mismatched = 0;
+// A change note as signed: spacing does not matter, anything else does.
+export const noteKey = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+
+// extra.setAside: how many differences the engine set aside as re-plot shifts. A review that found nothing, or
+// set something aside, needs one person to confirm it (decisions.__ack), so no release clears with nobody looking.
+export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, sheets = null, notes = null, extra = {}) {
+  let open = 0, unsigned = 0, rejected = 0, mismatched = 0, noteChanged = 0;
   for (const c of clouds) {
     const d = decisions[c.id] || {};
+    const note = d.status === 'declared' && notes ? notes.find((n) => n.n === d.note) : null;
     if (d.status === 'rejected') rejected++;
     else if (d.status !== 'declared' && d.status !== 'accepted') open++;
-    else if (d.status === 'declared' && notes && !notes.some((n) => n.n === d.note)) open++;
+    else if (d.status === 'declared' && notes && !note) open++;
+    // a signature is for the note as it read when signed: a rewritten (or renumbered) note needs signing again
+    else if (note && d.signedBy && d.noteText != null && noteKey(note.text) !== d.noteText) noteChanged++;
     else if (d.status === 'declared' && notes && !d.valueOk && valueSlip(c, notes.find((n) => n.n === d.note)?.text).length) mismatched++;
     else if (!d.signedBy) unsigned++;
   }
@@ -27,7 +35,9 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   const markups = marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)).length;
   // every sheet of a multi-sheet drawing has to be compared before release
   const unseen = sheets && sheets.count > 1 ? sheets.count - new Set(sheets.done || []).size : 0;
-  const blocked = open + unsigned + rejected + mismatched + markups + unseen > 0;
+  const needsAck = (!clouds.length && !marks.length) || (extra.setAside || 0) > 0;
+  const unconfirmed = needsAck && !decisions.__ack?.signedBy ? 1 : 0;
+  const blocked = open + unsigned + rejected + mismatched + markups + unseen + noteChanged + unconfirmed > 0;
   // every reason the release is held, most serious first, so the verdict never hides a second problem
   const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   const parts = [
@@ -36,7 +46,9 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     open && `${n(open, 'change on the drawing is', 'changes on the drawing are')} not in the change notes`,
     mismatched && `${n(mismatched, 'declared change shows a value its change note does not', 'declared changes show values their change notes do not')}`,
     markups && `${n(markups, 'pen markup on the print needs', 'pen markups on the print need')} an answer`,
+    noteChanged && `${n(noteChanged, 'change note was', 'change notes were')} edited after the sign-off`,
     unsigned && `${n(unsigned, 'declared change needs', 'declared changes need')} a sign-off`,
+    unconfirmed && (!clouds.length && !marks.length ? 'nobody has confirmed that the revisions show no differences' : 'nobody has confirmed what Redline set aside as re-plot shifts'),
   ].filter(Boolean);
   const text = parts.length ? parts.join('; ')
     : !clouds.length && !marks.length ? 'No differences found between the revisions'
@@ -48,16 +60,28 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     open && { kind: 'open', n: open, short: `${open} not in the notes` },
     mismatched && { kind: 'mismatched', n: mismatched, short: `${mismatched} ${mismatched === 1 ? 'value differs' : 'values differ'} from the note` },
     markups && { kind: 'markups', n: markups, short: `${markups} pen ${markups === 1 ? 'markup' : 'markups'} to answer` },
+    noteChanged && { kind: 'noteChanged', n: noteChanged, short: `${noteChanged} ${noteChanged === 1 ? 'note' : 'notes'} edited since signed` },
     unsigned && { kind: 'unsigned', n: unsigned, short: `${unsigned} to sign off` },
+    unconfirmed && { kind: 'ack', n: 1, short: !clouds.length && !marks.length ? 'confirm no differences' : 'confirm what was set aside' },
   ].filter(Boolean);
-  return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, text, parts, reasons };
+  return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, noteChanged, unconfirmed, text, parts, reasons };
 }
 
 // The release verdict for one work item, from its PDF attachments and the review in app storage. The
 // workflow validator, the dashboard gadget and the Rovo actions all use this, never the issue property.
+// "BRKT-0142_rev-D.pdf" -> "brkt-0142": the drawing a revision belongs to (null when the name has no revision)
+export function drawingOf(filename) {
+  const base = String(filename || '').replace(/\.[a-z0-9]+$/i, '');
+  // (the same strict reading as revision names: "review" or "revs" are not a revision)
+  const m = /^(.*?)[-_ .]*(?<![A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*(?:[A-Z]{1,2}|\d{1,3})$/.exec(base);
+  return m && m[1] ? m[1].toLowerCase().replace(/[-_ .]+$/, '') : null;
+}
+
 export function verdictOf(attachments, review, notes = null) {
   const pdfs = (attachments || []).filter((a) => a.mimeType === 'application/pdf')
     .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
+  const drawings = new Set(pdfs.map((a) => drawingOf(a.filename)).filter(Boolean));
+  if (drawings.size > 1) return { blocked: true, text: `${drawings.size} different drawings are attached; Redline compares one drawing per change order, so raise one change order per drawing` };
   if (pdfs.length < 2) {
     // a work item that never had two revisions is not a drawing change; one whose reviewed PDF was
     // deleted afterwards must not slip through
@@ -73,5 +97,5 @@ export function verdictOf(attachments, review, notes = null) {
   if (photos.length && +review.print?.id !== +photos[photos.length - 1].id) {
     return { blocked: true, text: 'the newest photo of a marked-up print has not been read on the light table' };
   }
-  return gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {}, review.sheets, notes);
+  return gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {}, review.sheets, notes, { setAside: (review.setAside || []).length });
 }

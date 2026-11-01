@@ -8,7 +8,7 @@ const fmt = (n) => String(Math.round(n * 1000) / 1000);
 // each kind of callout: a pattern whose first group is the value, and how to name it
 const KINDS = [
   { kind: 'tolerance', re: /±\s*(\d+(?:[.,]\d+)?)/g, name: 'Tolerance', compare: true },
-  { kind: 'diameter', re: /[Ø⌀]\s*(\d+(?:[.,]\d+)?)/g, name: 'Diameter' },
+  { kind: 'diameter', re: /[Ø⌀∅]\s*(\d+(?:[.,]\d+)?)/g, name: 'Diameter' },
   { kind: 'radius', re: /(?:^|[^A-Z])R\s?(\d+(?:[.,]\d+)?)/g, name: 'Radius' },
   { kind: 'angle', re: /(\d+(?:[.,]\d+)?)\s*°/g, name: 'Angle' },
   { kind: 'thread', re: /(?<![A-Za-z0-9])(M\d+(?:[.,]\d+)?(?:\s*[x×]\s*\d+(?:[.,]\d+)?)?|\d+\/\d+-\d+\s*UN[CFE]?|#\d+-\d+\s*UN[CFE]?)/gi, name: 'Thread', text: true },

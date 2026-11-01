@@ -7,7 +7,7 @@ import { revisionOfName } from './engine/titleblock.mjs';
 import { meaningOf } from './engine/meaning.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
-import { gateOf, valueSlip } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip, noteKey } from '../../../shared/gate.mjs';
 
 const MODES = [
   { key: 'overlay', label: 'Overlay', hint: 'Shared lines in graphite, removed in red, added in blue' },
@@ -257,10 +257,13 @@ export default function LightTable() {
   const allClouds = useMemo(() => Object.values(sheets.compared).flat(), [sheets]);
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => {
-    const g = gateOf(allClouds, decisions, marks, markDecisions, sheetInfo, order?.notes);
-    const photoPending = (order?.images || []).length > 0 && (!print || print.status === 'reading');
-    return photoPending ? { ...g, blocked: true, reasons: [...(g.reasons || []), { kind: 'photo', short: 'photo not read yet' }], text: [g.parts?.length ? g.text : null, 'the photo of the print has not been read yet'].filter(Boolean).join('; ') } : g;
-  }, [allClouds, decisions, marks, markDecisions, sheets, order, print]);
+    const g = gateOf(allClouds, decisions, marks, markDecisions, sheetInfo, order?.notes, { setAside: Object.values(aside).flat().length });
+    const images = order?.images || [];
+    const newest = images[images.length - 1];
+    const photoOk = !newest || ((print?.status === 'done' || print?.status === 'aside') && String(print.att?.id) === String(newest.id));
+    const why = !newest || photoOk ? null : !print || print.status === 'reading' ? 'photo not read yet' : print.status === 'error' ? 'photo could not be read: set it aside' : 'newest photo not read';
+    return why ? { ...g, blocked: true, reasons: [...(g.reasons || []), { kind: 'photo', short: why }], text: [g.parts?.length ? g.text : null, `the ${why}`].filter(Boolean).join('; ') } : g;
+  }, [allClouds, decisions, marks, markDecisions, sheets, order, print, aside]);
   // Saves go one at a time: a decision made while a save is on its way waits for it, then saves with
   // the new version, so two quick decisions never look like someone else saving in between.
   const saving = useRef(false), pending = useRef(false);
@@ -290,7 +293,9 @@ export default function LightTable() {
         } });
         if (out?.readOnly) { setSaved('View only: you cannot edit ' + (order?.key || 'this work item')); return; }
         if (out?.conflict) {
-          // someone else saved in between: take their decisions, then let this reviewer carry on
+          // someone else saved in between: take their decisions, then let this reviewer carry on. A save queued
+          // meanwhile would send the old decisions on top of theirs: it is dropped, and the merged state saves next
+          pending.current = false;
           versionRef.current = out.review.version || 0;
           setDecisions(out.review.decisions || {}); setMarkDecisions(out.review.markDecisions || {});
           setSaved('Someone else just saved this review; their decisions are loaded');
@@ -307,8 +312,8 @@ export default function LightTable() {
             const c = cur[id];
             if (!(c && c.status === d.status && (c.note ?? null) === (d.note ?? null) && !!c.signedAt === !!d.signedAt)) continue;
             const valueOk = d.valueOk ?? c.valueOk;
-            if (c.signedAt === d.signedAt && c.signedBy === d.signedBy && JSON.stringify(c.valueOk ?? null) === JSON.stringify(valueOk ?? null)) continue;
-            next[id] = { ...c, signedAt: d.signedAt, signedBy: d.signedBy, valueOk };
+            if (c.signedAt === d.signedAt && c.signedBy === d.signedBy && (c.noteText ?? null) === (d.noteText ?? null) && JSON.stringify(c.valueOk ?? null) === JSON.stringify(valueOk ?? null)) continue;
+            next[id] = { ...c, signedAt: d.signedAt, signedBy: d.signedBy, valueOk, ...(d.noteText != null ? { noteText: d.noteText } : {}) };
             changed = true;
           }
           return changed ? next : cur;
@@ -548,10 +553,14 @@ export { gateOf };
 function cropJpeg(flat, m) {
   const pad = 40, x = Math.max(0, Math.floor(m.x0 - pad)), y = Math.max(0, Math.floor(m.y0 - pad));
   const w = Math.min(flat.width - x, Math.ceil(m.x1 - m.x0 + 2 * pad)), h = Math.min(flat.height - y, Math.ceil(m.y1 - m.y0 + 2 * pad));
-  const c = document.createElement('canvas'); c.width = w * 2; c.height = h * 2;
+  // at most 1000 px on its longer side and about 300 KB, so it always fits in one call to the backend
+  const k = Math.min(2, 1000 / Math.max(w, h));
+  const c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
   const src = document.createElement('canvas'); src.width = flat.width; src.height = flat.height; src.getContext('2d').putImageData(flat, 0, 0);
-  c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, w * 2, h * 2);
-  return c.toDataURL('image/jpeg', 0.88).split(',')[1];
+  c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, c.width, c.height);
+  let q = 0.88, out = c.toDataURL('image/jpeg', q).split(',')[1];
+  while (out.length > 400000 && q > 0.4) { q -= 0.15; out = c.toDataURL('image/jpeg', q).split(',')[1]; }
+  return out;
 }
 
 function Shell({ order, gate, revs, saved, onClose = closeModal, children }) {
@@ -691,6 +700,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
         </ul>
         <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <SetAside list={aside[res.sheet] || []} showing={showAside} onShow={onShowAside} onCountBack={onCountBack} readOnly={order.canEdit === false} />
+        <Confirm gate={gate} d={decisions.__ack || {}} asideCount={Object.values(aside || {}).flat().length} revs={[res.revA, res.revB]} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
       </section>
       <PrintSection order={order} res={res} print={print} marks={marks} markDecisions={markDecisions} sel={sel}
         onSelect={onSelect} onReadPhoto={onReadPhoto} onAddPhoto={onAddPhoto} onDecideMark={onDecideMark} onRaiseMark={onRaiseMark} onSetAside={onSetAside} />
@@ -829,6 +839,20 @@ function priorDecisions(review, clouds, sheetNo) {
 
 // What the engine set aside: line work that a re-export nudged by under 0.7 mm and that matches once
 // shifted. Not counted as changes, but never hidden: each one can be shown on the sheet and counted back in.
+// A review that found nothing, or set line work aside, is confirmed by one named person before it can clear.
+function Confirm({ gate, d, asideCount, onDecide, onSign, readOnly }) {
+  if (!gate || (!gate.unconfirmed && !d.signedBy)) return null;
+  const what = asideCount ? `${asideCount} re-plot ${asideCount === 1 ? 'shift' : 'shifts'} set aside` : 'no differences between the revisions';
+  return (
+    <div className={`rl-confirm ${d.signedBy ? 'done' : ''}`}>
+      {d.signedBy
+        ? <p>Confirmed {what} by <b>{d.signedBy}</b>. {!readOnly && <button className="link" onClick={() => onDecide('__ack', { status: null, signedBy: null, signedAt: null })}>Undo</button>}</p>
+        : <><p>Redline found {what}. Someone has to confirm that by name before the release can go ahead.</p>
+          {!readOnly && <button className="rl-btn" onClick={() => { onDecide('__ack', { status: 'ack' }); onSign('__ack'); }}>Confirm and sign</button>}</>}
+    </div>
+  );
+}
+
 function SetAside({ list, showing, onShow, onCountBack, readOnly }) {
   const [open, setOpen] = useState(false);
   if (!list.length) return null;
@@ -927,7 +951,9 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
             <p className="st">{d.status === 'declared' ? (notes.some((n) => n.n === d.note) ? <>Declared in note {d.note}</> : <>Declared in note {d.note}, which is no longer in the change notes. Declare it again.</>) : c.kind === 'titleBlock' ? <>Released with the title block as it is</> : <>Accepted as a drawing correction</>}
               {' '}<button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null, signedBy: null, signedAt: null, valueOk: null })}>Change</button></p>
             {d.status === 'declared' && <ValueCheck c={c} d={d} note={notes.find((n) => n.n === d.note)} onDecide={onDecide} />}
-            {d.signedBy ? <p className="signed">Signed off by {d.signedBy}, {new Date(d.signedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
+            {d.signedBy && d.status === 'declared' && d.noteText != null && notes.some((n) => n.n === d.note) && noteKey(notes.find((n) => n.n === d.note).text) !== d.noteText
+              ? <><p className="rl-warn">Note {d.note} was edited after {d.signedBy} signed it off.</p><button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off again</button></>
+              : d.signedBy ? <p className="signed">Signed off by {d.signedBy}, {new Date(d.signedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
               : (d.status === 'declared' && (!notes.some((n) => n.n === d.note) || (!d.valueOk && valueSlip(c, notes.find((n) => n.n === d.note)?.text).length))) ? null
               : <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>}
           </>

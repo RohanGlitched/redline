@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { gateOf, verdictOf, valueSlip } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, noteKey } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 import { ENGINE_VERSION, matchChanges, sameReview } from '../shared/review.mjs';
 import { revisionOfName } from '../static/lighttable/src/engine/titleblock.mjs';
@@ -165,8 +165,14 @@ resolver.define('saveReview', async (req) => {
   const signed = [];
   for (const [id, d] of Object.entries(r.decisions || {})) {
     const before = beforeOf(id);
-    // a signature stands only while the decision it signed (status and note) is unchanged
-    const same = before && before.status === d.status && (before.note ?? null) === (d.note ?? null);
+    // the note text a declared change is signed against, as Jira has it now
+    const noteNow = d.status === 'declared' ? notes.find((n) => n.n === d.note) : null;
+    const noteText = noteNow ? noteKey(noteNow.text) : null;
+    // a signature stands only while the decision it signed (status, note and the note's words) is unchanged
+    const same = before && before.status === d.status && (before.note ?? null) === (d.note ?? null) && (before.noteText ?? null) === (noteText ?? before.noteText ?? null);
+    // the note was rewritten since it was signed: the old signature the browser still holds no longer counts
+    if (before?.signedAt && d.signedAt === before.signedAt && before.noteText != null && noteText != null && before.noteText !== noteText) delete d.signedAt;
+    if (noteText != null) d.noteText = noteText; else delete d.noteText;
     if (d.signedAt && same && before.signedById) { d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy; }
     // the signer is whoever is calling, named by Jira, never a name the browser sent
     else if (d.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); }
@@ -190,9 +196,10 @@ resolver.define('saveReview', async (req) => {
       r.marks = [...(r.marks || []), ...(stored.marks || []).filter((m) => !mids.has(m.id))];
     }
   }
-  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes);
+  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes, { setAside: (r.setAside || []).length });
   // who answered each pen markup, and who set a photo aside, as Jira names them
   for (const [id, m] of Object.entries(r.markDecisions || {})) {
+    if (m.status === 'raising') m.status = 'open';
     const was = stored?.markDecisions?.[id];
     if (m.status && m.status !== 'open' && was?.status === m.status) { m.by = was.by; m.byId = was.byId; m.at = was.at; }
     else if (m.status && m.status !== 'open') { m.by = me.displayName; m.byId = me.accountId; m.at = now; }
@@ -215,6 +222,7 @@ resolver.define('saveReview', async (req) => {
   }
   try { await kvs.set(reviewKey(issue.id), review); } catch (e) { await kvs.delete(claim).catch(() => {}); throw e; }
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
+  try {
   const audit = (await kvs.get(auditKey(issue.id))) || [];
   audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed, ...(reread ? { reread: `${stored.engine} -> ${r.engine}, ${stored.clouds?.length || 0} -> ${r.clouds?.length || 0} changes` } : {}) });
   await kvs.set(auditKey(issue.id), audit.slice(-200));
@@ -223,6 +231,7 @@ resolver.define('saveReview', async (req) => {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ gate: { status: gate.status, text: gate.text, open: gate.open }, revB: r.revB, version: review.version }),
   });
+  } catch (e) { console.warn('redline: review saved, audit or search copy not written'); }
   return { ok: true, version: review.version, gate, decisions: review.decisions };
 });
 
@@ -416,6 +425,8 @@ export async function onIssueUpdated(event) {
   const id = event.issue?.id;
   if (!id) return;
   const review = await kvs.get(reviewKey(id));
+  // with no review, only a new or removed attachment can change anything
+  if (!review && !fields.includes('attachment')) return;
   const res = await api.asApp().requestJira(route`/rest/api/3/issue/${id}?fields=attachment,description`);
   if (!res.ok) return;
   const issue = await res.json();

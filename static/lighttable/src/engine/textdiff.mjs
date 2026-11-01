@@ -11,9 +11,10 @@ const touch = (p, q, pad) => p.x0 - pad <= q.x1 && q.x0 - pad <= p.x1 && p.y0 - 
 // Both revisions keep readable text: most of revision A's words appear in revision B too. A scanned revision,
 // or one exported with its text turned into outlines, has none, and comparing words would call them all removed.
 export function bothReadable(a = [], b = []) {
-  if (a.length < 3 || b.length < 3) return false;
-  const words = new Set(b.map((t) => norm(t.str)));
-  return a.filter((t) => words.has(norm(t.str))).length / a.length >= 0.5;
+  const wordsOf = (ts) => ts.flatMap((t) => String(t.str).normalize('NFKC').split(/\s+/)).filter(Boolean).map(norm);
+  const wa = wordsOf(a), wb = new Set(wordsOf(b));
+  if (wa.length < 3 || wb.size < 3) return false;
+  return wa.filter((w) => wb.has(w)).length / wa.length >= 0.5;
 }
 
 export function textChanges(a = [], b = [], pad = 1) {
