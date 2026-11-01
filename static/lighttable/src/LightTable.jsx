@@ -109,7 +109,7 @@ export default function LightTable() {
         setOrder(o);
         const pdfs = o.attachments;
         if (o.drawingConflict) { setError(`${o.drawingConflict} different drawings are attached with revisions. Redline compares one drawing per change order: move each drawing's revisions to its own change order.`); return; }
-        if (pdfs.length < 2) { setError('Attach two PDF revisions of the drawing to this work item, oldest first.'); return; }
+        if (pdfs.length < 2) { setError('Attach two PDF revisions of the drawing to this work item, named by revision (BRKT-0142_rev-C.pdf, BRKT-0142_rev-D.pdf).'); return; }
         const [revA, revB] = o.pair?.length === 2 ? o.pair.map((id) => pdfs.find((p) => +p.id === +id)) : pdfs.slice(-2);
         if (o.review?.revB?.id === revB.id) {
           // sheets compared in an earlier session count as compared, with their saved changes

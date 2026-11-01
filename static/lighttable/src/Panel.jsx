@@ -59,7 +59,7 @@ export default function Panel() {
         <div className="rl-panel-gate new">
           <span className="dot" aria-hidden="true" />
           <div>
-            <p className="lead">Attach two PDF revisions of the drawing, the earlier one first</p>
+            <p className="lead">Attach two PDF revisions of the drawing, named by revision (…_rev-C.pdf, …_rev-D.pdf)</p>
             <p className="sub">Redline lines them up, clouds each change it finds, and checks each one against the numbered change notes in the description, such as "1. Zone D2: bore Ø25 to Ø25.5".</p>
           </div>
           {o.canEdit !== false && <button className="rl-btn" disabled={adding} onClick={addSample}>{adding ? 'Adding sample…' : 'Add a sample change order'}</button>}
