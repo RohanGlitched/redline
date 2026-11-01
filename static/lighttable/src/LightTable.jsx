@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, closeModal, getFocus } from './bridge.js';
 import { matchChanges, overlap } from '../../../shared/review.mjs';
+import { revisionOfName } from './engine/titleblock.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
 import { gateOf, valueSlip } from '../../../shared/gate.mjs';
@@ -534,7 +535,7 @@ function Shell({ order, gate, revs, saved, children }) {
 }
 
 // "BRKT-0142_rev-D.pdf" -> "Rev D"; a name with no revision in it is shown as it is
-const revName = (a) => { const m = a.filename.match(/(?:^|[^a-z])rev(?:ision)?[-_ .]?([A-Z0-9]{1,3})(?![a-z])/i); return m ? `Rev ${m[1].toUpperCase()}` : a.filename; };
+const revName = (a) => { const r = revisionOfName(a.filename); return r ? `Rev ${r}` : a.filename; };
 
 function Warmup({ stage }) {
   return (

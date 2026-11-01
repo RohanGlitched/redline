@@ -379,7 +379,15 @@ export async function onIssueDeleted(event) {
   if (!id) return;
   await kvs.delete(reviewKey(id)).catch(() => {});
   await kvs.delete(auditKey(id)).catch(() => {});
-  for (let n = 1; n <= 50; n++) await kvs.delete(thumbKey(id, n)).catch(() => {});
+  // every sheet's thumbnail, however many sheets the drawing had
+  for (let cursor; ;) {
+    let q = kvs.query().where('key', WhereConditions.beginsWith(`thumb:${id}:`)).limit(100);
+    if (cursor) q = q.cursor(cursor);
+    const page = await q.getMany();
+    for (const x of page.results) await kvs.delete(x.key).catch(() => {});
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
 }
 
 export async function onIssueUpdated(event) {

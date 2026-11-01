@@ -178,6 +178,10 @@ test('the revision a file name gives', () => {
   assert.equal(revisionOfName('bracket REV C.pdf'), 'C');
   assert.equal(revisionOfName('preview.pdf'), null);
   assert.equal(revisionOfName('revised layout.pdf'), null);
+  assert.equal(revisionOfName('bracket_review.pdf'), null);
+  assert.equal(revisionOfName('BRKT_revD.pdf'), 'D');
+  assert.equal(revisionOfName('housing rev-10.pdf'), '10');
+  assert.equal(revisionOfName('plate_REV_AB.pdf'), 'AB');
 });
 
 test('the title block letter: split or joined words, lowest label wins, nothing outside the corner', () => {

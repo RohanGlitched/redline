@@ -4,7 +4,8 @@
 
 // The revision a file name says it is: "BRKT-0142_rev-D.pdf" -> "D".
 export function revisionOfName(filename = '') {
-  const m = String(filename).match(/(?:^|[^a-z])rev(?:ision)?[-_ .]?([A-Z0-9]{1,3})(?![a-z])/i);
+  // a letter or two, or a number, standing on its own after "rev": never the rest of a word like "review"
+  const m = String(filename).match(/(?:^|[^a-z])rev(?:ision)?[-_ .]*([a-z]{1,2}|\d{1,3})(?![a-z0-9])/i);
   return m ? m[1].toUpperCase() : null;
 }
 
