@@ -1,8 +1,7 @@
 // The issue panel: the release gate in one sentence, the changes by zone, and the way into the light table.
 import { useEffect, useState } from 'react';
 import { invoke, openLightTable } from './bridge.js';
-import { gateOf } from './LightTable.jsx';
-import { valueSlip } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip } from '../../../shared/gate.mjs';
 import { cloudPath } from './cloud.js';
 
 export default function Panel() {
@@ -57,7 +56,9 @@ export default function Panel() {
   }
   // the verdict the backend recomputed when the review was saved (the same one the release gate uses)
   // the backend's verdict covers what the saved gate cannot see: a newer revision or an unread photo
-  const gate = r ? (o.verdict ? { ...o.verdict, blocked: !!o.verdict.blocked } : r.gate ? { ...r.gate, blocked: r.gate.status === 'blocked' } : gateOf(r.clouds, r.decisions)) : null;
+  const gate = r ? (o.verdict ? { ...o.verdict, blocked: !!o.verdict.blocked } : r.gate ? { ...r.gate, blocked: r.gate.status === 'blocked' } : gateOf(r.clouds, r.decisions))
+    // reviewed before, but a newer revision (or photo) has arrived since: say exactly why release waits
+    : o.review && o.verdict?.blocked ? { ...o.verdict, blocked: true } : null;
   const multi = (r?.sheets?.count || 1) > 1;
   const thumbs = o.thumbs || [];
   return (

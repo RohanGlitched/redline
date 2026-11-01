@@ -1,10 +1,11 @@
 import { createRoot } from 'react-dom/client';
 import { getContext, enableTheme } from './bridge.js';
-import LightTable from './LightTable.jsx';
 import Panel from './Panel.jsx';
 import Gadget from './Gadget.jsx';
 import './styles.css';
 import { Component } from 'react';
+import LightTable from './LightTable.jsx';
+
 
 // If anything fails while drawing, say so plainly instead of leaving an empty frame.
 class Boundary extends Component {

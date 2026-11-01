@@ -4,6 +4,7 @@ import { kvs, WhereConditions } from '@forge/kvs';
 import { gateOf, verdictOf, valueSlip } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 import { ENGINE_VERSION, matchChanges, sameReview } from '../shared/review.mjs';
+import { revisionOfName } from '../static/lighttable/src/engine/titleblock.mjs';
 
 export { verdictOf, notesFromAdf };
 
@@ -201,6 +202,10 @@ resolver.define('saveReview', async (req) => {
   // app storage keeps values up to 240 KiB: drop the set-aside list (it can be found again) before refusing
   if (Buffer.byteLength(JSON.stringify(review)) > 230000) review.setAside = (review.setAside || []).slice(0, 20);
   if (Buffer.byteLength(JSON.stringify(review)) > 230000) return { stale: true, error: 'This review is too large to save. Split the drawing into fewer sheets per change order.' };
+  // two reviewers saving from the same version at once: each save first claims its version number, and only
+  // one claim can exist, so the second gets "someone else just saved" instead of silently overwriting
+  try { await kvs.set(`claim:${issue.id}:${review.version}`, now, { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: 1, unit: 'HOURS' } }); }
+  catch { return { conflict: true, review: (await kvs.get(reviewKey(issue.id))) || stored }; }
   await kvs.set(reviewKey(issue.id), review);
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   const audit = (await kvs.get(auditKey(issue.id))) || [];
@@ -400,11 +405,23 @@ export async function onIssueUpdated(event) {
   const fields = (event.changelog?.items || []).map((i) => String(i.field || '').toLowerCase());
   if (!fields.some((f) => f === 'attachment' || f === 'description')) return;
   const id = event.issue?.id;
-  const review = id && (await kvs.get(reviewKey(id)));
-  if (!review) return;
+  if (!id) return;
+  const review = await kvs.get(reviewKey(id));
   const res = await api.asApp().requestJira(route`/rest/api/3/issue/${id}?fields=attachment,description`);
   if (!res.ok) return;
   const issue = await res.json();
+  // a work item that now carries two drawing revisions but was never compared is held too (the validator
+  // already refuses its release); the JQL copy says so, so search and dashboards find it
+  if (!review) {
+    // (only PDFs named as drawing revisions, "BRKT-0142_rev-C.pdf": two invoices on a work item are not a change order)
+    const pdfs = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf' && revisionOfName(a.filename));
+    if (pdfs.length < 2) return;
+    await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gate: { status: 'blocked', text: 'the two latest drawing revisions have not been compared yet', open: 0 } }),
+    });
+    return;
+  }
   const v = verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description));
   await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
