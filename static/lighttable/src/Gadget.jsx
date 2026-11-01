@@ -31,7 +31,7 @@ export default function Gadget() {
               <button onClick={() => openPath(`/browse/${c.key}`)}>
                 <span className="key">{c.key}</span>
                 <span className="sum">{c.summary}</span>
-                <span className="why"><span className="dot" aria-hidden="true" />{c.gate || 'Release blocked'}</span>
+                <span className="why"><span className="dot" aria-hidden="true" />{c.gate ? c.gate[0].toUpperCase() + c.gate.slice(1) : 'Release blocked'}</span>
               </button>
             </li>
           ))}
