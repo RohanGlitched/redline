@@ -4,8 +4,12 @@ Redline adds a workflow validator called **Redline drawing release gate**. Put i
 
 - the newest two PDF revisions on the work item have been compared in Redline, every sheet of them;
 - every change Redline found is declared in a numbered change note, or accepted as a correction;
-- every declared change is signed off;
-- every red-pen markup on a photographed print is raised as a work item, covered by a change, or dismissed.
+- every declared change is signed off, and its note still reads as it did when it was signed (a rewritten or renumbered note needs signing again);
+- every declared change's values agree with its note both ways, or someone has confirmed by name that the drawing is right;
+- every numbered change note is carried out by a change on the drawing, or someone has said by name that it needs no drawing change;
+- a review that found nothing, or that set line work aside as re-plot shifts, has been confirmed by name;
+- the newest photo of a marked-up print has been read on the light table (or set aside as not a print), and every red-pen markup on it is raised as a work item, covered by a change, or dismissed;
+- only one drawing's revisions are attached: two different drawings, each with revisions, belong on two change orders.
 
 ## Add the validator (company-managed project)
 

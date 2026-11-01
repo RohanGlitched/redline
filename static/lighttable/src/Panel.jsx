@@ -40,6 +40,19 @@ export default function Panel() {
 
   const pdfs = o.attachments;
   const r = o.review && pdfs.length >= 2 && o.review.revB?.id === pdfs[pdfs.length - 1].id ? o.review : null;
+  if (o.drawingConflict) {
+    return (
+      <div className="rl-panel">
+        <div className="rl-panel-gate blocked">
+          <span className="dot" aria-hidden="true" />
+          <div>
+            <p className="lead">Release blocked: {o.drawingConflict} different drawings are attached with revisions</p>
+            <p className="sub">Redline compares one drawing per change order. Move each drawing's revisions to its own change order.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (pdfs.length < 2) {
     return (
       <div className="rl-panel">
@@ -47,7 +60,7 @@ export default function Panel() {
           <span className="dot" aria-hidden="true" />
           <div>
             <p className="lead">Attach two PDF revisions of the drawing, the earlier one first</p>
-            <p className="sub">Redline lines them up, clouds every change, and checks each one against the numbered change notes in the description, such as "1. Zone D2: bore Ø25 to Ø25.5".</p>
+            <p className="sub">Redline lines them up, clouds each change it finds, and checks each one against the numbered change notes in the description, such as "1. Zone D2: bore Ø25 to Ø25.5".</p>
           </div>
           {o.canEdit !== false && <button className="rl-btn" disabled={adding} onClick={addSample}>{adding ? 'Adding sample…' : 'Add a sample change order'}</button>}
         </div>

@@ -248,6 +248,7 @@ export default function LightTable() {
     Object.entries(ms || {}).map(([id, m]) => [id, m.status ?? null]).sort()]);
   const latestSnap = useRef(null), savedSnap = useRef(null), touchedRef = useRef(false);
   latestSnap.current = snapOf(decisions, markDecisions);
+  const markDecisionsRef = useRef(markDecisions); markDecisionsRef.current = markDecisions;
   const [closeWarned, setCloseWarned] = useState(false);
 
   // Close never drops a decision: a save still waiting runs now, and one on its way is waited for
@@ -260,10 +261,11 @@ export default function LightTable() {
       if (savePromise.current === p && !pending.current && !timerRef.current) break;
     }
     // something decided that never reached Jira (the save failed, or could not start yet): say so once
-    const unsaved = !readOnly && (savedSnap.current === null ? touchedRef.current : latestSnap.current !== savedSnap.current);
+    const raising = Object.values(markDecisionsRef.current || {}).some((m) => m?.status === 'raising');
+    const unsaved = !readOnly && (raising || (savedSnap.current === null ? touchedRef.current : latestSnap.current !== savedSnap.current));
     if (unsaved && !closeWarned) {
       setCloseWarned(true);
-      setSaved('Not saved: your latest decisions are not stored yet. Wait a moment, or close again to leave without them.');
+      setSaved(raising ? 'A markup is still being raised as a work item. Wait for its key, or close again to leave now.' : 'Not saved: your latest decisions are not stored yet. Wait a moment, or close again to leave without them.');
       return;
     }
     closeModal();
@@ -328,8 +330,8 @@ export default function LightTable() {
             const c = cur[id];
             if (!(c && c.status === d.status && (c.note ?? null) === (d.note ?? null) && !!c.signedAt === !!d.signedAt)) continue;
             const valueOk = d.valueOk ?? c.valueOk;
-            if (c.signedAt === d.signedAt && c.signedBy === d.signedBy && (c.noteText ?? null) === (d.noteText ?? null) && JSON.stringify(c.valueOk ?? null) === JSON.stringify(valueOk ?? null)) continue;
-            next[id] = { ...c, signedAt: d.signedAt, signedBy: d.signedBy, valueOk, ...(d.noteText != null ? { noteText: d.noteText } : {}) };
+            if (c.signedAt === d.signedAt && c.signedBy === d.signedBy && (c.noteText ?? null) === (d.noteText ?? null) && (c.asideCount ?? null) === (d.asideCount ?? null) && JSON.stringify(c.valueOk ?? null) === JSON.stringify(valueOk ?? null)) continue;
+            next[id] = { ...c, signedAt: d.signedAt, signedBy: d.signedBy, valueOk, ...(d.noteText != null ? { noteText: d.noteText } : {}), ...(d.asideCount != null ? { asideCount: d.asideCount } : {}) };
             changed = true;
           }
           return changed ? next : cur;
@@ -871,10 +873,10 @@ function Confirm({ gate, d, asideCount, onDecide, onSign, readOnly }) {
   const what = asideCount ? `${asideCount} re-plot ${asideCount === 1 ? 'shift' : 'shifts'} set aside` : 'no differences between the revisions';
   return (
     <div className={`rl-confirm ${d.signedBy ? 'done' : ''}`}>
-      {d.signedBy
+      {d.signedBy && !gate.unconfirmed
         ? <p>Confirmed {what} by <b>{d.signedBy}</b>. {!readOnly && <button className="link" onClick={() => onDecide('__ack', { status: null, signedBy: null, signedAt: null })}>Undo</button>}</p>
-        : <><p>Redline found {what}. Someone has to confirm that by name before the release can go ahead.</p>
-          {!readOnly && <button className="rl-btn" onClick={() => { onDecide('__ack', { status: 'ack' }); onSign('__ack'); }}>Confirm and sign</button>}</>}
+        : <><p>{d.signedBy ? `More was set aside since ${d.signedBy} confirmed: ${what}. ` : `Redline found ${what}. `}Someone has to confirm that by name before the release can go ahead.</p>
+          {!readOnly && <button className="rl-btn" onClick={() => { onDecide('__ack', { status: 'ack', signedBy: null, signedAt: null }); onSign('__ack'); }}>{d.signedBy ? 'Confirm again' : 'Confirm and sign'}</button>}</>}
     </div>
   );
 }

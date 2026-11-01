@@ -166,11 +166,12 @@ resolver.define('saveReview', async (req) => {
     const noteNow = d.status === 'declared' ? notes.find((n) => n.n === d.note) : null;
     const noteText = noteNow ? noteKey(noteNow.text) : null;
     // a signature stands only while the decision it signed (status, note and the note's words) is unchanged
-    const same = before && before.status === d.status && (before.note ?? null) === (d.note ?? null) && (before.noteText ?? null) === (noteText ?? before.noteText ?? null);
+    const same = before && before.status === d.status && (before.note ?? null) === (d.note ?? null) && (before.noteText == null || noteText == null || before.noteText === noteText);
     // the note was rewritten since it was signed: the old signature the browser still holds no longer counts
     if (before?.signedAt && d.signedAt === before.signedAt && before.noteText != null && noteText != null && before.noteText !== noteText) delete d.signedAt;
+    if (reread && !(same && before?.signedById)) { delete d.signedAt; delete d.valueOk; }
     if (noteText != null) d.noteText = noteText; else delete d.noteText;
-    if (d.signedAt && same && before.signedById) { d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy; }
+    if (d.signedAt && same && before.signedById) { d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy; if (before.asideCount != null) d.asideCount = before.asideCount; }
     // the signer is whoever is calling, named by Jira, never a name the browser sent
     else if (d.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); if (id === '__ack') d.asideCount = (r.setAside || []).length + ((sameRevs && !reread ? (stored.setAside || []).filter((a) => !(r.setAside || []).some((b) => b.id === a.id)).length : 0)); }
     if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
@@ -228,15 +229,17 @@ resolver.define('saveReview', async (req) => {
   try { await kvs.set(reviewKey(issue.id), review); } catch (e) { await kvs.delete(claim).catch(() => {}); throw e; }
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   try {
-  const audit = (await kvs.get(auditKey(issue.id))) || [];
+    const audit = (await kvs.get(auditKey(issue.id))) || [];
   audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed, ...(reread ? { reread: `${stored.engine} -> ${r.engine}, ${stored.clouds?.length || 0} -> ${r.clouds?.length || 0} changes` } : {}) });
-  await kvs.set(auditKey(issue.id), audit.slice(-200));
+    await kvs.set(auditKey(issue.id), audit.slice(-200));
+  } catch (e) { console.warn('redline: review saved, audit entry not written'); }
   // searchable copy for JQL only; the validator, the gadget and Rovo recompute from app storage
+  try {
   await api.asApp().requestJira(route`/rest/api/3/issue/${key}/properties/${PROP}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ gate: { status: gate.status, text: gate.text, open: gate.open }, revB: r.revB, version: review.version }),
   });
-  } catch (e) { console.warn('redline: review saved, audit or search copy not written'); }
+  } catch (e) { console.warn('redline: review saved, search copy not written'); }
   return { ok: true, version: review.version, gate, decisions: review.decisions };
 });
 
@@ -317,6 +320,7 @@ export async function releaseGate(event) {
 function describe(o) {
   const r = o.review;
   const latest = o.attachments[o.attachments.length - 1];
+  if (o.drawingConflict) return { key: o.key, state: 'blocked', gate: o.verdict?.text, message: `${o.drawingConflict} different drawings are attached with revisions; Redline compares one drawing per change order, so release is blocked.` };
   if (o.attachments.length < 2) return o.review
     ? { key: o.key, state: 'blocked', gate: o.verdict?.text, message: 'A reviewed drawing revision was removed from the work item, so release is blocked.' }
     : { key: o.key, state: 'no-revisions', message: 'Fewer than two PDF revisions are attached.' };

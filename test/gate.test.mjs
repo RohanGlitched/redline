@@ -160,7 +160,7 @@ test('after a re-read, each earlier change is matched once, to the new change in
   assert.equal(Object.values(m).filter((o) => o === 's1-c1').length, 1); // never handed to two changes
   assert.equal(m['s1-c4'], undefined); // a new change starts open
   assert.ok(!Object.values(m).includes('s2-c1')); // other sheets are never matched
-  assert.equal(ENGINE_VERSION, 'redline-core 0.5');
+  assert.equal(ENGINE_VERSION, 'redline-core 0.6');
 });
 
 test('a save that changes nothing is recognised; any decision or finding change is not', () => {
