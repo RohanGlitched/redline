@@ -76,7 +76,7 @@ export default function Panel() {
             <div className={`rl-thumbs n${Math.min(thumbs.length, 3)}`}>
               {thumbs.map((t) => (
                 <Thumb key={t.sheet} t={t} label={multi ? `Sheet ${t.sheet}` : null} onOpen={() => open({ sheet: t.sheet })}
-                  clouds={r.clouds.filter((c) => (c.sheet || 1) === t.sheet)} decisions={r.decisions} />
+                  clouds={r.clouds.filter((c) => (c.sheet || 1) === t.sheet)} decisions={r.decisions} notes={o.notes} />
               ))}
             </div>
           )}
@@ -114,10 +114,12 @@ export default function Panel() {
   );
 }
 
+// a declared change whose drawing value its note does not state is drawn as needing attention
+const shownStatus = (c, d, notes) => (d.status === 'declared' && !d.valueOk && valueSlip(c, notes?.find((n) => n.n === d.note)?.text).length ? 'undeclared' : cloudStatus(d));
 const cloudStatus = (d) => (d.status === 'rejected' ? 'rejected' : d.status === 'declared' || d.status === 'accepted' ? (d.signedBy ? 'signed' : 'declared') : 'undeclared');
 
 // Revision B of one sheet, as a diazo print, with every change clouded in the colour of its decision.
-function Thumb({ t, clouds, decisions, label, onOpen }) {
+function Thumb({ t, clouds, decisions, notes, label, onOpen }) {
   const k = t.w / 560; // stroke widths in thumbnail pixels
   return (
     <figure className="rl-thumb">
@@ -127,7 +129,7 @@ function Thumb({ t, clouds, decisions, label, onOpen }) {
           {clouds.map((c, i) => {
             const [x0, y0, x1, y1] = c.box;
             return (
-              <g key={c.id} className={`tc ${cloudStatus(decisions[c.id] || {})}`} style={{ '--i': i }}>
+              <g key={c.id} className={`tc ${shownStatus(c, decisions[c.id] || {}, notes)}`} style={{ '--i': i }}>
                 <path d={cloudPath(x0, y0, x1, y1, 14 * k, 12 * k)} strokeWidth={3 * k} pathLength="1" />
                 <g transform={`translate(${x1 + 16 * k} ${y0 - 14 * k}) scale(${k * 1.5})`}>
                   <path d="M0,-15 L15,11 L-15,11 Z" />
