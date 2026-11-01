@@ -9,7 +9,7 @@ export const numbersIn = (s) => [...String(s || '').matchAll(/\d+(?:[.,]\d+)?/g)
 // Ø25.5 and the drawing says Ø25.6. Returns the values the note is missing (empty when they agree).
 export function valueSlip(cloud, noteText) {
   if (!cloud?.values?.length || noteText == null) return [];
-  const said = new Set(numbersIn(noteText));
+  const said = new Set(numbersIn(String(noteText).replace(/\b(zones?|sheets?)\s+[A-Z]?\d{1,3}(\s*(,|and|&)\s*[A-Z]?\d{1,3})*/gi, ' ')));
   return cloud.values.filter((v) => !said.has(v));
 }
 
@@ -19,6 +19,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     const d = decisions[c.id] || {};
     if (d.status === 'rejected') rejected++;
     else if (d.status !== 'declared' && d.status !== 'accepted') open++;
+    else if (d.status === 'declared' && notes && !notes.some((n) => n.n === d.note)) open++;
     else if (d.status === 'declared' && notes && !d.valueOk && valueSlip(c, notes.find((n) => n.n === d.note)?.text).length) mismatched++;
     else if (!d.signedBy) unsigned++;
   }

@@ -38,7 +38,7 @@ export default function Gadget() {
         </ul>
       ) : <p className="rl-gadget-none">No change order is held. Every reviewed drawing change is declared and signed off.</p>}
       {d.changeOrders.length > 0 && (
-        <button className="rl-goto" onClick={() => openPath(`/issues/?jql=${encodeURIComponent('redlineGate = "blocked" ORDER BY updated DESC')}`)}>Show all in search</button>
+        <button className="rl-goto" onClick={() => openPath(`/issues/?jql=${encodeURIComponent(`key in (${d.changeOrders.map((c) => c.key).join(',')}) ORDER BY updated DESC`)}`)}>Show them in search</button>
       )}
     </div>
   );

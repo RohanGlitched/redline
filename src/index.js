@@ -1,6 +1,6 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
-import { kvs } from '@forge/kvs';
+import { kvs, WhereConditions } from '@forge/kvs';
 import { gateOf, verdictOf } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
@@ -94,7 +94,7 @@ resolver.define('saveThumb', async (req) => {
 const SLICE = 3_000_000, MAX = 40_000_000;
 let lastFile = null; // { id, account, buf, at }: reused by the next slice while the function is warm
 resolver.define('getAttachment', async (req) => {
-  const id = String(req.payload.id), account = req.context.accountId;
+  const id = String(req.payload.id), account = `${req.context.cloudId}:${req.context.accountId}`;
   let buf;
   if (lastFile && lastFile.id === id && lastFile.account === account && Date.now() - lastFile.at < 60000) buf = lastFile.buf;
   else {
@@ -120,28 +120,37 @@ async function canEdit(key) {
 resolver.define('saveReview', async (req) => {
   const key = issueKey(req);
   if (!(await canEdit(key))) return { readOnly: true };
-  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=summary,description`)).json();
+  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=summary,description,attachment`)).json();
   const notes = notesFromAdf(issue.fields.description);
   const stored = await kvs.get(reviewKey(issue.id));
   const base = req.payload.baseVersion || 0;
   if (stored && (stored.version || 0) !== base) return { conflict: true, review: stored };
   const r = req.payload.review, now = new Date().toISOString();
+  // a review is always of the two newest PDF revisions on the work item, named by id
+  const pdfs = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf')
+    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id);
+  const [newA, newB] = pdfs.slice(-2);
+  if (!newA || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'This review is not of the two newest drawing revisions. Reopen the light table to compare them.' };
   const me = await (await jira(route`/rest/api/3/myself`)).json();
   const signed = [];
   for (const [id, d] of Object.entries(r.decisions || {})) {
     const before = stored?.decisions?.[id];
+    // a signature stands only while the decision it signed (status and note) is unchanged
+    const same = before && before.status === d.status && (before.note ?? null) === (d.note ?? null);
+    if (d.signedAt && same && before.signedById) { d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy; }
     // the signer is whoever is calling, named by Jira, never a name the browser sent
-    if (d.signedAt && d.signedAt !== before?.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); }
-    else if (before?.signedById && d.signedAt === before.signedAt) { d.signedById = before.signedById; d.signedBy = before.signedBy; }
+    else if (d.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); }
     if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
     // "the drawing is right" on a value slip is a decision too: named by Jira, kept as first recorded
-    if (d.valueOk) d.valueOk = before?.valueOk || { by: me.displayName, byId: me.accountId, at: now };
+    if (d.valueOk) d.valueOk = (same && before?.valueOk) || { by: me.displayName, byId: me.accountId, at: now };
   }
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
-  // an earlier comparison found, so a review cannot be emptied after the fact.
-  if (stored && +stored.revA?.id === +r.revA?.id && +stored.revB?.id === +r.revB?.id) {
+  // an earlier comparison found, and what was found about a change (its box, text and values) stays as
+  // first recorded, so a review cannot be emptied or softened after the fact.
+  if (stored && +stored.revA?.id === +r.revA.id && +stored.revB?.id === +r.revB.id) {
+    const was = new Map((stored.clouds || []).map((c) => [c.id, c]));
     const ids = new Set((r.clouds || []).map((c) => c.id));
-    r.clouds = [...(r.clouds || []), ...(stored.clouds || []).filter((c) => !ids.has(c.id))];
+    r.clouds = [...(r.clouds || []).map((c) => (was.has(c.id) ? { ...c, ...was.get(c.id) } : c)), ...(stored.clouds || []).filter((c) => !ids.has(c.id))];
     const done = new Set([...(r.sheets?.done || []), ...(stored.sheets?.done || [])]);
     r.sheets = { count: Math.max(r.sheets?.count || 1, stored.sheets?.count || 1), done: [...done].sort((x, y) => x - y) };
     const mids = new Set((r.marks || []).map((m) => m.id));
@@ -159,7 +168,7 @@ resolver.define('saveReview', async (req) => {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ gate: { status: gate.status, text: gate.text, open: gate.open }, revB: r.revB, version: review.version }),
   });
-  return { ok: true, version: review.version, gate };
+  return { ok: true, version: review.version, gate, decisions: review.decisions };
 });
 
 async function attach(key, name, mime, base64) {
@@ -241,8 +250,8 @@ function describe(o) {
   const stale = r.revB?.id !== latest.id;
   return {
     key: o.key,
-    state: stale ? 'stale' : r.gate?.status,
-    gate: r.gate?.text,
+    state: o.verdict ? (o.verdict.blocked ? 'blocked' : 'clear') : stale ? 'stale' : r.gate?.status,
+    gate: o.verdict?.text || r.gate?.text,
     compared: `${r.revA?.filename} to ${r.revB?.filename}`,
     staleReason: stale ? `${latest.filename} was attached after the last review` : undefined,
     notes: o.notes,
@@ -266,21 +275,35 @@ export async function getDrawingReview(payload) {
 // Change orders Redline has reviewed, each with its verdict recomputed from app storage. The issue
 // property only narrows the search; a hand-edited property cannot make a held change order look clear.
 async function reviewedChangeOrders(projectKey) {
+  // every review Redline has stored, found by key in app storage (deleting or editing the issue property
+  // cannot hide a change order from this list)
+  const ids = [];
+  for (let cursor; ;) {
+    let q = kvs.query().where('key', WhereConditions.beginsWith('review:')).limit(100);
+    if (cursor) q = q.cursor(cursor);
+    const page = await q.getMany();
+    ids.push(...page.results.map((x) => x.key.slice('review:'.length)));
+    if (!page.nextCursor || ids.length >= 500) break;
+    cursor = page.nextCursor;
+  }
+  if (!ids.length) return { items: [] };
   const project = projectKey ? ` AND project = "${String(projectKey).replace(/"/g, '')}"` : '';
-  const jql = `redlineGate IS NOT EMPTY${project} ORDER BY updated DESC`;
-  const res = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jql, maxResults: 100, fields: ['summary', 'status', 'attachment', 'description'] }),
-  });
-  if (!res.ok) return { error: `Search failed (${res.status}).` };
-  const issues = (await res.json()).issues || [];
-  const reviews = await Promise.all(issues.map((i) => kvs.get(reviewKey(i.id))));
-  return {
-    items: issues.map((i, k) => {
-      const v = verdictOf(i.fields.attachment, reviews[k], notesFromAdf(i.fields.description));
-      return { key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text };
-    }),
-  };
+  const items = [];
+  for (let k = 0; k < ids.length; k += 100) {
+    const jql = `id in (${ids.slice(k, k + 100).join(',')})${project} ORDER BY updated DESC`;
+    const res = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jql, maxResults: 100, fields: ['summary', 'status', 'attachment', 'description'] }),
+    });
+    if (!res.ok) return { error: `Search failed (${res.status}).` };
+    const issues = (await res.json()).issues || [];
+    const reviews = await Promise.all(issues.map((i) => kvs.get(reviewKey(i.id))));
+    issues.forEach((i, n) => {
+      const v = verdictOf(i.fields.attachment, reviews[n], notesFromAdf(i.fields.description));
+      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text, since: reviews[n]?.savedAt });
+    });
+  }
+  return { items };
 }
 
 // The dashboard gadget: change orders held by Redline with the reason, and how many are ready to release.

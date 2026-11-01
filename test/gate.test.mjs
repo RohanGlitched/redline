@@ -109,3 +109,18 @@ test('a declared change whose drawing value the note does not state blocks relea
   assert.equal(gateOf(c, { c1: { ...signed(1), valueOk: { by: 'Priya' } } }, [], {}, null, notes).blocked, false);
   assert.equal(gateOf([{ id: 'c1', values: [25.5] }], { c1: signed(1) }, [], {}, null, notes).blocked, false);
 });
+
+test('a change declared against a note that no longer exists counts as not declared', () => {
+  const g = gateOf([{ id: 'c1' }], { c1: signed(3) }, [], {}, null, [{ n: 1, text: 'Zone D2: x' }]);
+  assert.equal(g.open, 1);
+});
+
+test('zone and sheet labels in a note never vouch for a drawing value', () => {
+  assert.deepEqual(valueSlip({ values: [2] }, 'Zone D2: change the radius'), [2]);
+  assert.deepEqual(valueSlip({ values: [7] }, 'Sheet 2, zone A7: add note 7'), []);
+});
+
+test('the verdict lists every reason, most serious first', () => {
+  const g = gateOf([{ id: 'c1' }, { id: 'c2' }], { c2: { status: 'declared', note: 1 } }, [{ id: 'm1' }], {}, null, [{ n: 1, text: 'x' }]);
+  assert.match(g.text, /^1 change on the drawing is not in the change notes; 1 pen markup .* an answer; 1 declared change needs a sign-off$/);
+});

@@ -53,7 +53,10 @@ export default function LightTable() {
     let r;
     try { r = analysed.current[n] || (analysed.current[n] = await analyse(invoke, revA, revB, o.notes, setStage, n)); }
     finally { setTurning(null); }
-    setPhase('dark'); setSel(null); setPrint(null);
+    setPhase('dark'); setSel(null);
+    // the photo of the print belongs to sheet 1: it stays read (and counted) while other sheets are
+    // compared, but is only shown over sheet 1
+    if (n !== 1) setMode((m) => (m === 'print' ? 'overlay' : m));
     // cloud ids carry the sheet so decisions on different sheets never collide
     const clouds = r.clouds.map((c) => ({ ...c, id: `s${n}-${c.id}`, sheet: n }));
     const prior = o.review && o.review.revB?.id === revB.id ? o.review.decisions || {} : {};
@@ -228,7 +231,17 @@ export default function LightTable() {
           setSaved('Someone else just saved this review; their decisions are loaded');
           return;
         }
+        if (out?.stale) { setSaved(out.error); return; }
         versionRef.current = out?.version ?? versionRef.current;
+        // take back what the server stamped (who signed, when), without disturbing decisions made since
+        if (out?.decisions) setDecisions((cur) => {
+          const next = { ...cur };
+          for (const [id, d] of Object.entries(out.decisions)) {
+            const c = cur[id];
+            if (c && c.status === d.status && (c.note ?? null) === (d.note ?? null) && !!c.signedAt === !!d.signedAt) next[id] = { ...c, signedAt: d.signedAt, signedBy: d.signedBy, valueOk: d.valueOk ?? c.valueOk };
+          }
+          return next;
+        });
         setSaved('Saved to ' + (order?.key || 'the work item'));
       } catch (e) { setSaved('Not saved: ' + e.message); }
     }, 500);
@@ -294,7 +307,7 @@ export default function LightTable() {
       <div className="rl-body">
         <section className="rl-table" aria-label="Light table">
           <div className="rl-modes" role="tablist" aria-label="Compare mode">
-            {[...MODES, ...(print?.status === 'done' ? [{ key: 'print', label: 'Marked-up print', hint: 'The phone photo, flattened onto the sheet' }] : [])].map((m) => (
+            {[...MODES, ...(print?.status === 'done' && res.sheet === 1 ? [{ key: 'print', label: 'Marked-up print', hint: 'The phone photo, flattened onto the sheet' }] : [])].map((m) => (
               <button key={m.key} role="tab" aria-selected={mode === m.key} title={m.hint} className={mode === m.key ? 'on' : ''} onClick={() => setMode(m.key)}>{m.label}</button>
             ))}
             <span className="rl-legend" aria-hidden={mode !== 'overlay'} data-on={mode === 'overlay'}>
@@ -337,7 +350,7 @@ export default function LightTable() {
                     </g>
                   );
                 })}
-                {marks.map((m, i) => {
+                {res.sheet === 1 && marks.map((m, i) => {
                   const d = markDecisions[m.id] || {};
                   return (
                     <g key={m.id} className={`rl-mark ${d.status || 'open'} ${sel === m.id ? 'sel' : ''}`} style={{ '--delay': `${i * 220}ms` }}
