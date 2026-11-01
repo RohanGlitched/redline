@@ -47,7 +47,7 @@ button { font: inherit; color: inherit; }
 .rl-gate .dot, .rl-panel-gate .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; flex: none; }
 .rl-gate.blocked .dot { animation: rl-pulse 1.6s ease-in-out infinite; }
 @keyframes rl-pulse { 50% { opacity: 0.35; } }
-.rl-saved { color: var(--rl-subtlest); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 22ch; }
+.rl-saved { color: var(--rl-subtlest); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30ch; }
 .rl-close { border: 1px solid var(--rl-border); background: var(--rl-surface); border-radius: 4px; padding: 5px 12px; cursor: pointer; }
 
 .rl-body { display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: 0; }
