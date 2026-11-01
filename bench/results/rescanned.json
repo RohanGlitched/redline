@@ -1,0 +1,18 @@
+{
+ "variant": "bs",
+ "pairs": 352,
+ "recall": 0.921,
+ "found": 398,
+ "total": 432,
+ "byKind": {
+  "delete": "56/71",
+  "move": "93/96",
+  "add": "110/111",
+  "retext": "81/95",
+  "resize": "58/59"
+ },
+ "falsePerSheet": 0.99,
+ "falsePerCleanSheet": 1.1,
+ "avgMs": 625,
+ "medianAngleErr": "0.007"
+}

@@ -1,5 +1,5 @@
 """A phone photo of the printed rev D sample with a machinist's pen markups, for the sample change order.
-The markups are a ring around the B5 datum area, "R3 MAX" beside a fillet, and a crossed-out callout.
+The markups are a ring with "CHECK POS?" around the hole the drafter moved, and "R3 MAX" with an arrow to a fillet.
 Simulated photograph (perspective, light, blur, noise, JPEG); labelled as simulated wherever it is shown.
 usage: python make_sample_photo.py <rev-D.pdf> <out.jpg>
 """

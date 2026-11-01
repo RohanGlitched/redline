@@ -11,7 +11,7 @@ Redline is a Forge app for Jira that compares the two newest PDF revisions attac
 - holds the release transition until every change is declared and signed off;
 - reads a phone photo of a marked-up print and lists every red-pen markup on it, so comments from the shop floor need an answer too.
 
-The comparison runs in the browser inside Jira. Drawings never leave Atlassian, and Redline calls no AI service.
+The comparison runs in the browser inside Jira. Drawings never leave Atlassian, and the comparison calls no AI service.
 
 It is for the people who sign off drawing changes: design checkers, quality engineers and manufacturing engineers at companies that run engineering change orders in Jira, typically hardware teams and contract manufacturers without a separate PLM system.
 
@@ -27,9 +27,11 @@ It is for the people who sign off drawing changes: design checkers, quality engi
 
 The ledger lists each change with before-and-after crops; a change whose content only moved says how far (*Moved 3 mm right and down*). Plot stamps and labels that moved without changing are grouped as housekeeping, to look over and sign together, and line work a re-export nudged by under 0.7 mm is set aside in its own list, drawn on the sheet on request and can be counted back in. Arrow keys step through the changes, number keys declare one against a change note, and S signs it off. Multi-sheet drawings are compared sheet by sheet, and the release stays blocked until every sheet has been compared.
 
+**Text the pixels can miss.** Where the PDF keeps its text, Redline compares the words as well as the line work, so a one-letter or one-digit edit (25.5 to 25.6, Rev A to Rev B) is a change even when it moves too little ink to see.
+
 **Title block.** The drawing being released must name its own revision: if revision D's title block still reads Rev C, that is a change like any other, and the release waits until someone answers it. A letter that moved on as it should is grouped with the housekeeping.
 
-**Marked-up prints.** Attach a phone photo of the printed sheet. Redline finds the sheet in the photo, flattens it onto revision B, separates pen red from red printed on the drawing, and lists each markup. Every markup must be raised as a work item, covered by a change, or dismissed before release.
+**Marked-up prints.** Attach a phone photo of the printed sheet. Redline finds the sheet in the photo, flattens it onto the new revision, separates pen red from red printed on the drawing, and lists each markup. Every markup must be raised as a work item, covered by a change, or dismissed before release.
 
 **Release gate.** A workflow validator that refuses the release transition until the review is complete. It reads the review from Redline's own app storage rather than from an issue property, re-checks that the review covers the two newest PDFs, and fails closed if Jira cannot say what is attached. See [Set up the release gate](docs/release-gate.md).
 
@@ -49,7 +51,7 @@ The engine is plain JavaScript with no dependencies: [`static/lighttable/src/eng
 
 ## On real drawings
 
-We ran Redline on drawings nobody prepared for it: 27 consecutive revision pairs of 7 drawings from 5 SparkFun open-hardware repositories, taken from their GitHub history, with each commit message standing in for the change notes. Redline drew 365 clouds, and we classified every one: 87 are changes to parts, connections, values or notes (a jumper, test points, a regulator block, a resistor value, a USB filter removed, swapped connectors). **The commit messages clearly describe 4 of the 87.** The per-cloud table is published. The run also taught the engine to set aside re-plot shifts (all 30 it set aside are published side by side, and each reads the same before and after) and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
+We ran Redline on drawings nobody prepared for it: 27 consecutive revision pairs of 7 drawings from 5 SparkFun open-hardware repositories, taken from their GitHub history, with each commit message standing in for the change notes. Redline drew 365 clouds, and we classified every one: 87 are changes to parts, connections, values or notes (a jumper, test points, a regulator block, a resistor value, a USB filter removed, renamed nets). **The commit messages clearly describe 4 of the 87.** The per-cloud table is published. The run also taught the engine to set aside re-plot shifts (all 30 it set aside are published side by side, and each reads the same before and after) and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
 
 ## Measured on a benchmark
 
@@ -58,7 +60,7 @@ On 352 revision pairs we built from public-domain NIST test drawings, with edits
 | | Result |
 |---|---|
 | Digital revisions | 431 of 432 visible edits found, no false clouds on unchanged sheets, 0.01 false clouds a sheet overall, about 0.3 s a sheet |
-| Simulated rescans of revision B (rotated, scaled, blurred, noisy, JPEG) | 396 of 432 edits found (91.7%), 2.7 false clouds a sheet |
+| Simulated rescans of revision B (rotated, scaled, blurred, noisy, JPEG) | 398 of 432 edits found (92.1%), about 1 false cloud a sheet |
 | Simulated phone photos of marked-up prints (60 photos, 160 pen marks) | 160 of 160 marks found, no false marks |
 
 The scripts and the method are in [`bench/`](bench/). Anyone with the NIST drawings can run them again.

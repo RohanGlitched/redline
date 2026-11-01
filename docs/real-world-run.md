@@ -8,7 +8,7 @@ Everything in [the benchmark](../bench/README.md) is built by us: we planted the
 
 - **Drawings:** 7 PDF drawings from 5 repositories: the GNSSDO main board, GNSSDO Plus and GNSSDO dimensions drawings (`SparkFun_GNSSDO`), and the schematics of `SparkFun_GNSS_Flex_Breakout`, `SparkFun_IM19_IMU_Breakout`, `SparkFun_GNSS_mosaic-G5_P3` and `SparkFun_Thing_Plus_RA6M5`.
 - **Revision pairs:** every consecutive pair of versions in git history: **27 pairs, 118 sheet pairs**, dated December 2023 to November 2025.
-- **Engine:** the same comparison code the app ships, with the same thresholds. The harness renders each PDF with PyMuPDF straight to 150 dpi, where the app renders with pdf.js at 300 dpi and halves it; both compare at 150 dpi. Scripts are in [`bench/real/`](../bench/real/); anyone can clone the repositories and run them again.
+- **Engine:** the same comparison code the app ships, with the same thresholds. The harness renders each PDF with PyMuPDF straight to 150 dpi, where the app renders with pdf.js at 300 dpi and halves it; both compare at 150 dpi. The run's totals and every revision pair (commits, dates, sheets, clouds, set-aside, moves) are in [`real-world/run-summary.json`](real-world/run-summary.json). Scripts are in [`bench/real/`](../bench/real/); anyone can clone the repositories and run them again.
 
 ## What it found
 
@@ -30,7 +30,7 @@ To check what the clouds mean, we classified **every one of the 365** from befor
 
 **Of the 87 changes to parts, connections, values or notes, the commit messages clearly describe 4.** 48 are clearly not in their message, and for 35 the message is too vague to tell ("Final tweaks", "Updates after review", "Update to latest SparkFun KiCad Libraries"). Per release, which is how a checker meets them: **in 10 of the 21 revision pairs with such changes, the message clearly misses at least one, and in none does it clearly describe them all.** The GNSSDO Plus drawing repeats some of the GNSSDO's sheets; counting each repeat described the same way once leaves 74 changes, still with 4 clearly described. Some are exactly the kind of change Redline exists to catch:
 
-- under "Add mounting holes for SiT5811 / Rakon oscillator": a new jumper **JP1** in series with the log button, a new test point **TP1** on the 3.3 V rail, and diode references D9 and D10 swapped (figure above);
+- under "Add mounting holes for SiT5811 / Rakon oscillator": a new jumper **JP1** in series with the log button and a new test point **TP1** on the 3.3 V rail (figure above);
 - under "Update logo symbol and footprint": a new **3.3 V analog regulator block** (U25 with its capacitors and a test point), and **R8, the resistor the board reads to tell which oscillator is fitted, changed from 1k to 2k**;
 - under "Change KiCad file name to SparkPNT_GPSDO": **seven new test points** on the J9 screw terminal;
 - under "Routed and panelized": connector J13 reassigned from a UART with flow control to UART plus I²C, and the **common-mode filter removed from the USB data lines**;
