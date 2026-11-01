@@ -1,6 +1,6 @@
 // The issue panel: the release gate in one sentence, the changes by zone, and the way into the light table.
 import { useEffect, useState } from 'react';
-import { invoke, openLightTable, getContext } from './bridge.js';
+import { invoke, openLightTable } from './bridge.js';
 import { gateOf } from './LightTable.jsx';
 import { cloudPath } from './cloud.js';
 
@@ -30,9 +30,8 @@ export default function Panel() {
   }
   useEffect(() => { load(); }, []);
 
-  async function open() {
-    const ctx = await getContext();
-    await openLightTable(ctx);
+  async function open(focus = null) {
+    await openLightTable(focus);
     load(); // the light table saved its review; refresh the summary
   }
 
@@ -68,14 +67,14 @@ export default function Panel() {
           <p className="lead">{!gate ? 'Not compared yet' : gate.blocked ? 'Release blocked' : 'Ready to release'}</p>
           <p className="sub">{!gate ? `${pdfs[pdfs.length - 2].filename} and ${pdfs[pdfs.length - 1].filename} are attached.` : cap(gate.text)}</p>
         </div>
-        <button className="rl-btn primary" onClick={open}>{gate ? 'Open light table' : 'Compare revisions'}</button>
+        <button className="rl-btn primary" onClick={() => open()}>{gate ? 'Open light table' : 'Compare revisions'}</button>
       </div>
       {r && (
         <div className={`rl-panel-body ${thumbs.length ? '' : 'solo'}`}>
           {thumbs.length > 0 && (
             <div className={`rl-thumbs n${Math.min(thumbs.length, 3)}`}>
               {thumbs.map((t) => (
-                <Thumb key={t.sheet} t={t} label={multi ? `Sheet ${t.sheet}` : null} onOpen={open}
+                <Thumb key={t.sheet} t={t} label={multi ? `Sheet ${t.sheet}` : null} onOpen={() => open({ sheet: t.sheet })}
                   clouds={r.clouds.filter((c) => (c.sheet || 1) === t.sheet)} decisions={r.decisions} />
               ))}
             </div>
@@ -91,10 +90,12 @@ export default function Panel() {
                 const label = d.status === 'rejected' ? 'Sent back' : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : 'Not in notes';
                 return [...head, (
                   <li key={c.id} className={st}>
-                    <span className="delta">{c.n}</span>
-                    <span className="zone">{c.zone}</span>
-                    <span className="lab">{label}</span>
-                    <span className="who">{d.signedBy ? `Signed, ${d.signedBy}` : st === 'declared' ? 'Needs sign-off' : ''}</span>
+                    <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Open change ${c.n} in the light table`}>
+                      <span className="delta">{c.n}</span>
+                      <span className="zone">{c.zone}</span>
+                      <span className="lab">{label}</span>
+                      <span className="who">{d.signedBy ? `Signed, ${d.signedBy}` : st === 'declared' ? 'Needs sign-off' : ''}</span>
+                    </button>
                   </li>
                 )];
               })}

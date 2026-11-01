@@ -1,7 +1,7 @@
 // The light table: two drawing revisions registered on one sheet, every change clouded, every cloud
 // tied to a change-note line or held as undeclared, and the release gate that follows from it.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { invoke, closeModal } from './bridge.js';
+import { invoke, closeModal, getFocus } from './bridge.js';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
 import { gateOf, valueSlip } from '../../../shared/gate.mjs';
@@ -258,6 +258,18 @@ export default function LightTable() {
   }, []);
 
   const select = (c) => { setSel(c.id); flyTo(c); };
+
+  // Opened from the issue panel on one change (or one sheet): turn to its sheet, then fly to it.
+  const focusRef = useRef(undefined);
+  useEffect(() => { getFocus().then((f) => { focusRef.current = f; }).catch(() => {}); }, []);
+  useEffect(() => {
+    const f = focusRef.current;
+    if (!f || phase !== 'ready' || !res) return;
+    if ((f.sheet || 1) !== res.sheet) { if (!turning && f.sheet <= sheets.count) goSheet(f.sheet); return; }
+    focusRef.current = null;
+    const c = f.id && res.clouds.find((x) => x.id === f.id);
+    if (c) select(c);
+  }, [phase, res]);
   const decide = (id, patch) => { if (!readOnly) setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); };
   const signOff = (id) => decide(id, { signedBy: order.user.displayName, signedAt: new Date().toISOString() });
 

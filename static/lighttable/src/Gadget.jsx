@@ -2,6 +2,12 @@
 import { useEffect, useState } from 'react';
 import { invoke, openPath } from './bridge.js';
 
+// "held 3 h", "held 2 days": how long a change order has waited since its review was last saved
+function held(iso) {
+  const h = Math.max(0, (Date.now() - new Date(iso).getTime()) / 3600e3);
+  return h < 1 ? 'held < 1 h' : h < 48 ? `held ${Math.round(h)} h` : `held ${Math.round(h / 24)} days`;
+}
+
 export default function Gadget() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
@@ -30,6 +36,7 @@ export default function Gadget() {
             <li key={c.key}>
               <button onClick={() => openPath(`/browse/${c.key}`)}>
                 <span className="key">{c.key}</span>
+                {c.since && <span className="age">{held(c.since)}</span>}
                 <span className="sum">{c.summary}</span>
                 <span className="why"><span className="dot" aria-hidden="true" />{c.gate ? c.gate[0].toUpperCase() + c.gate.slice(1) : 'Release blocked'}</span>
               </button>

@@ -75,14 +75,20 @@ export async function getContext() {
 
 export async function enableTheme() { if (!DEV) await (await forgeP).view.theme.enable(); }
 
-export async function openLightTable() {
-  if (DEV) { window.open('?view=table', '_blank'); return; }
+export async function openLightTable(focus = null) {
+  if (DEV) { window.open(`?view=table${focus ? `&focus=${focus.id}&sheet=${focus.sheet || 1}` : ''}`, '_blank'); return; }
   const { Modal, view } = await forgeP;
   const ctx = await view.getContext();
-  // the modal reloads this same bundle; the context tells main.jsx to show the light table, and
-  // carries the work item key because a modal has no issue of its own
+  // the modal reloads this same bundle; the context tells main.jsx to show the light table, carries the
+  // work item key because a modal has no issue of its own, and names the change to open on, if any
   return new Promise((resolve) => new Modal({ resource: 'main', size: 'max', closeOnOverlayClick: false,
-    context: { mode: 'lighttable', issueKey: ctx.extension.issue.key }, onClose: resolve }).open());
+    context: { mode: 'lighttable', issueKey: ctx.extension.issue.key, focus }, onClose: resolve }).open());
+}
+
+// The change the light table was asked to open on ({ id, sheet }), or null.
+export async function getFocus() {
+  if (DEV) { const q = new URLSearchParams(location.search); return q.get('focus') ? { id: q.get('focus'), sheet: +q.get('sheet') || 1 } : null; }
+  return (await (await forgeP).view.getContext()).extension?.modal?.focus || null;
 }
 
 export async function closeModal() { if (!DEV) (await forgeP).view.close(); }
