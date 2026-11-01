@@ -289,6 +289,29 @@ resolver.define('raiseMarkup', async (req) => {
   return { key: created.key, linked, cropAttached };
 });
 
+// A change no note describes can be written up as the next numbered note, from what Redline read (zone, what moved,
+// the values). The description is the change order: the note goes into its numbered list, and the change is then
+// declared against it and signed like any other.
+resolver.define('addNote', async (req) => {
+  const key = issueKey(req);
+  if (!(await canEdit(key))) return { readOnly: true };
+  const text = String(req.payload?.text || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 400);
+  if (!text) throw new Error('The note is empty.');
+  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=description`)).json();
+  const doc = issue.fields.description || { type: 'doc', version: 1, content: [] };
+  const before = notesFromAdf(doc), n = before.length ? Math.max(...before.map((x) => x.n)) + 1 : 1;
+  const item = { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] };
+  const lists = (doc.content || []).filter((x) => x.type === 'orderedList');
+  const last = lists[lists.length - 1];
+  if (last && (last.attrs?.order || 1) + (last.content || []).length === n) last.content.push(item);
+  else {
+    if (!before.length) doc.content.push({ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Change notes' }] });
+    doc.content.push({ type: 'orderedList', attrs: { order: n }, content: [item] });
+  }
+  await jira(route`/rest/api/3/issue/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { description: doc } }) });
+  return { notes: notesFromAdf(doc), n };
+});
+
 // A judge or new user on an empty site can add the bundled sample change order (two public-domain
 // NIST drawing revisions and two numbered change notes) to the work item they are looking at.
 resolver.define('addSample', async (req) => {

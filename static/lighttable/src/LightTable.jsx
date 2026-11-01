@@ -457,6 +457,15 @@ export default function LightTable() {
       return { ...d, [id]: { ...cur, ...(moved ? { signedBy: null, signedAt: null, valueOk: null } : {}), ...patch } };
     });
   };
+  // write an undeclared change up as the next change note, then declare it there (the reviewer still signs)
+  const addNote = async (c, text) => {
+    try {
+      const out = await invoke('addNote', { text });
+      if (out?.readOnly) return;
+      setOrder((o) => ({ ...o, notes: out.notes }));
+      decide(c.id, { status: 'declared', note: out.n });
+    } catch (e) { setSaved('Could not add the note: ' + (e.message || e)); }
+  };
   const signOff = (id) => { const at = new Date().toISOString(); signedNow.current.set(id, { at, shown: shownNote(id) }); decide(id, { signedBy: order.user.displayName, signedAt: at }); };
   // a reviewer who disagrees with the engine counts a set-aside difference back in: it becomes a change
   // like any other, open until it is declared or accepted and signed
@@ -608,7 +617,7 @@ export default function LightTable() {
         </section>
         <Ledger earlierMarks={earlierMarks} res={res} order={order} decisions={decisions} sel={sel} phase={phase} gate={gate}
           sheet={sheet} sheets={sheets} allClouds={allClouds} onSheet={goSheet}
-          onSelect={select} onDecide={decide} onSign={signOff}
+          onSelect={select} onDecide={decide} onSign={signOff} onAddNote={readOnly ? null : addNote}
           print={print} marks={marks} markDecisions={markDecisions} onReadPhoto={readPhoto} onAddPhoto={addPhoto}
           onDecideMark={decideMark} onRaiseMark={raiseMark}
           onSetAside={(att) => { if (!readOnly) setPrint({ att, status: 'aside' }); }}
@@ -758,7 +767,7 @@ function Zoom({ cam }) {
   return <div className="rl-zoom" aria-hidden="true">{Math.round(cam.s * 100)}%</div>;
 }
 
-function Ledger({ earlierMarks = [], res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside, aside, showAside, onShowAside, onCountBack }) {
+function Ledger({ earlierMarks = [], onAddNote = null, res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside, aside, showAside, onShowAside, onCountBack }) {
   const shown = phase === 'ready' ? res.clouds.length : phase === 'clouds' ? res.clouds.length : 0;
   return (
     <aside className={`rl-ledger ${order.canEdit === false ? 'readonly' : ''}`} aria-label="Change ledger">
@@ -797,7 +806,7 @@ function Ledger({ earlierMarks = [], res, order, decisions, sel, phase, gate, sh
         <ul>
           {res.clouds.filter((c) => !c.housekeeping).map((c, i) => (
             <CloudRow key={c.id} c={c} i={i} d={decisions[c.id] || {}} notes={order.notes} res={res}
-              visible={i < shown} active={sel === c.id} onSelect={onSelect} onDecide={onDecide} onSign={onSign} />
+              visible={i < shown} active={sel === c.id} onSelect={onSelect} onDecide={onDecide} onSign={onSign} onAddNote={onAddNote} />
           ))}
         </ul>
         <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
@@ -1088,7 +1097,13 @@ function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, o
   );
 }
 
-function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, onSign }) {
+// What a change note for this change would say, from what Redline read: "Zone C3: moved 3 mm right and down".
+const draftNote = (c) => {
+  const what = c.before && c.after && c.before !== c.after ? `${c.before} changes to ${c.after}` : (meaningOf(c.before, c.after)[0]?.text || kindText(c) || '');
+  return `Zone ${c.zone}: ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
+};
+
+function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, onSign, onAddNote = null }) {
   const state = cloudState(d);
   // the selected change scrolls into view in the ledger, wherever it was selected from
   const rowRef = useRef(null);
@@ -1141,6 +1156,9 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
           <>
             <p className="st warn">{c.kind === 'titleBlock' ? 'The drawing does not name the revision it releases' : 'Not in the change notes'}</p>
             {c.kind !== 'titleBlock' && c.suggest && <p className="suggest">Near note {c.suggest}. <button className="link" onClick={() => onDecide(c.id, { status: 'declared', note: c.suggest })}>Declare in note {c.suggest}</button></p>}
+            {c.kind !== 'titleBlock' && !c.housekeeping && onAddNote && !c.suggest && (
+              <p className="suggest">If this change is intended, write it up: <button className="link" onClick={() => onAddNote(c, draftNote(c))}>add note {notes.length ? Math.max(...notes.map((n) => n.n)) + 1 : 1}, "{draftNote(c)}"</button></p>
+            )}
             <div className="rl-choices">
               {c.kind !== 'titleBlock' && <select aria-label={`Declare change ${c.n} in a note`} value="" onChange={(e) => e.target.value && onDecide(c.id, { status: 'declared', note: +e.target.value })}>
                 <option value="">Declare in note…</option>

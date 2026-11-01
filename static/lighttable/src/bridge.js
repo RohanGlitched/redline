@@ -36,6 +36,11 @@ const REVIEW_KEY = `redline-review-${SAMPLE.key}`;
 
 async function devInvoke(fn, payload = {}) {
   await new Promise((r) => setTimeout(r, 120));
+  if (fn === 'addNote') {
+    const n = Math.max(0, ...SAMPLE.notes.map((x) => x.n)) + 1;
+    SAMPLE.notes = [...SAMPLE.notes, { n, text: payload.text }];
+    return { notes: SAMPLE.notes, n };
+  }
   if (fn === 'getChangeOrder') {
     const review = JSON.parse(localStorage.getItem(REVIEW_KEY) || 'null');
     const thumbs = (review?.sheets?.done || [1]).map((n) => JSON.parse(localStorage.getItem(`${REVIEW_KEY}-thumb-${n}`) || 'null'))
