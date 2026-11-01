@@ -493,7 +493,7 @@ export default function LightTable() {
             )}
             <button className="rl-fit" onClick={fit} title="Fit the sheet (F)">Fit sheet</button>
           </div>
-          <div className={`rl-stage ${lit ? 'lit' : ''} phase-${phase}`} ref={stageRef}
+          <div className={`rl-stage ${lit ? 'lit' : ''} phase-${phase} mode-${mode}`} ref={stageRef}
             onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onWheel={onWheel}>
             {turning && <div className="rl-turning" role="status"><span>Comparing sheet {turning}: {stage.toLowerCase()}…</span></div>}
             <div className="rl-sheet" style={{ width: A.w, height: A.h, transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.s})` }}>
@@ -517,6 +517,13 @@ export default function LightTable() {
                         <path d="M0,-15 L15,11 L-15,11 Z" />
                         <text y="7" textAnchor="middle">{c.n}</text>
                       </g>
+                      {sel === c.id && c.before && c.after && c.before !== c.after && (
+                        // a text edit, said in words under its cloud: the overlay draws both values on one spot
+                        <g className="rl-textlabel" transform={`translate(${(c.x0 + c.x1) / 2},${c.y1 + 14 / cam.s}) scale(${1 / cam.s})`}>
+                          <rect x={-(String(c.before).length + String(c.after).length + 3) * 4.3 - 8} y="0" width={(String(c.before).length + String(c.after).length + 3) * 8.6 + 16} height="22" rx="4" />
+                          <text y="15" textAnchor="middle"><tspan className="old">{c.before}</tspan> → <tspan className="new">{c.after}</tspan></text>
+                        </g>
+                      )}
                     </g>
                   );
                 })}

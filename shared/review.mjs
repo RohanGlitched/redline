@@ -1,3 +1,4 @@
+import { noteKey } from './gate.mjs';
 // Rules for saving a review that the browser and the backend share. Pure functions, tested in
 // test/gate.test.mjs.
 
@@ -36,4 +37,35 @@ export function sameReview(a, b) {
     Object.fromEntries(Object.entries(r.decisions || {}).map(([k, d]) => [k, [d.status, d.note ?? null, d.signedAt || null, d.valueOk?.at || null]])),
     Object.fromEntries(Object.entries(r.markDecisions || {}).map(([k, d]) => [k, [d.status, d.note ?? null]]))]);
   return pick(a) === pick(b);
+}
+
+// Who signed what, decided by the server. The caller names the decisions they signed or confirmed in this save
+// (signed, confirmed); those are stamped with the caller's Jira name. Every other signature, and every "the
+// drawing is right", is kept only while its decision and the words of the note it was given against are
+// unchanged; otherwise it is dropped. beforeOf(id) gives the stored decision this one continues (or undefined).
+// Changes `decisions` in place; returns the ids stamped in this save.
+export function settleSignatures(decisions, { beforeOf, notes = [], signed = [], confirmed = [], me, now, asideTotal = 0 }) {
+  const signedIds = new Set(signed.map(String)), confirmedIds = new Set(confirmed.map(String)), stamped = [];
+  for (const [id, d] of Object.entries(decisions)) {
+    const before = beforeOf(id);
+    // the note a decision is about: the note a change is declared in, or note N for "needs no drawing change"
+    const noteNo = d.status === 'declared' ? d.note : /^note(\d+)$/.test(id) ? +id.slice(4) : null;
+    const noteNow = noteNo != null ? notes.find((n) => n.n === noteNo) : null;
+    // (a note that does not read right now keeps the words it was signed against)
+    const noteText = noteNow ? noteKey(noteNow.text) : noteNo != null ? (before?.noteText ?? null) : null;
+    const same = !!before && before.status === d.status && (before.note ?? null) === (d.note ?? null)
+      && (before.noteText == null || noteText == null || before.noteText === noteText);
+    if (signedIds.has(id) && d.signedAt) {
+      d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; stamped.push(id);
+      if (id === '__ack') d.asideCount = asideTotal; else delete d.asideCount;
+    } else if (same && before.signedById) {
+      d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy;
+      if (before.asideCount != null) d.asideCount = before.asideCount; else delete d.asideCount;
+    } else { delete d.signedAt; delete d.signedById; delete d.signedBy; delete d.asideCount; }
+    if (confirmedIds.has(id) && d.valueOk) d.valueOk = { by: me.displayName, byId: me.accountId, at: now, ...(noteText != null ? { noteText } : {}) };
+    else if (same && before?.valueOk && (before.valueOk.noteText == null || before.valueOk.noteText === noteText)) d.valueOk = before.valueOk;
+    else delete d.valueOk;
+    if (noteText != null) d.noteText = noteText; else delete d.noteText;
+  }
+  return stamped;
 }

@@ -70,3 +70,12 @@ You can also ask the **Drawing change checker** agent in Rovo, for example *"Whi
 ## Permissions
 
 Redline reads the work item, its attachments and its description as the person using it, so nobody sees a drawing they could not open in Jira. People who can view a work item but not edit it can open the light table and see the review, but their decisions are not saved.
+
+## When the drawings live in a PDM or PLM vault
+
+Redline needs the released PDFs on the change order, named as revisions of one drawing (for example `BRKT-0142_rev-C.pdf` and `BRKT-0142_rev-D.pdf`; "Rev D", "rev-d" and "RevD1" read the same). Teams whose CAD lives in SolidWorks PDM, Autodesk Vault or a PLM usually already publish a PDF when a revision is released. Two ways to get it onto the change order without anyone downloading and re-uploading:
+
+- **Email to Jira:** set the vault's release notification (or a publish task) to email the PDF to the project's incoming mail address with the change order's key in the subject; Jira attaches it to that work item.
+- **Jira Automation:** an incoming-webhook rule receives the vault's release event and adds the PDF as an attachment to the work item named in the payload.
+
+Either way the update trigger notices the new revision, marks the change order "not compared yet" in search, and the gate holds the release until someone compares the revisions in the light table.

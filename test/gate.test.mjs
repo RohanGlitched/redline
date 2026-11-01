@@ -368,3 +368,51 @@ test('a PDF attached after the reviewed revision that Redline cannot place holds
   assert.equal(verdictOf(atts, { ...review, decisions: { ...review.decisions, pdf3: { status: 'aside', signedBy: 'Asha' } } }).blocked, false);
   assert.equal(drawingOf('BRKT-0142 Rev E (released).pdf'), 'brkt-0142');
 });
+
+// ---------- who signed what (the server's rules) ----------
+import { settleSignatures } from '../shared/review.mjs';
+const alice = { accountId: 'a', displayName: 'Alice' }, bob = { accountId: 'b', displayName: 'Bob' };
+const notesV1 = [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.5' }], notesV2 = [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.7' }];
+
+test('only what the caller signed in this save is stamped, in the caller\'s name', () => {
+  const stored = { c1: { status: 'declared', note: 1, signedAt: 't1', signedById: 'a', signedBy: 'Alice', noteText: 'Zone D2: bore Ø25 becomes Ø25.5' } };
+  // Bob's save carries Alice's signature back (as the browser holds it) and signs nothing himself
+  const d = { c1: { status: 'declared', note: 1, signedAt: 't1', signedBy: 'Alice' }, c2: { status: 'accepted', signedAt: 'forged', signedBy: 'Mallory' } };
+  const stamped = settleSignatures(d, { beforeOf: (id) => stored[id], notes: notesV1, signed: [], me: bob, now: 't2' });
+  assert.deepEqual(stamped, []);
+  assert.equal(d.c1.signedBy, 'Alice'); // kept: nothing changed
+  assert.equal(d.c2.signedBy, undefined); // a signature the server never stamped is dropped
+});
+
+test('a rewritten note drops the signature and the value confirmation, and never re-stamps them in the next saver\'s name', () => {
+  const stored = { c1: { status: 'declared', note: 1, signedAt: 't1', signedById: 'a', signedBy: 'Alice', noteText: 'Zone D2: bore Ø25 becomes Ø25.5', valueOk: { by: 'Alice', at: 't1', noteText: 'Zone D2: bore Ø25 becomes Ø25.5' } } };
+  const d = { c1: { status: 'declared', note: 1, signedAt: 't1', signedBy: 'Alice', valueOk: { by: 'Alice', at: 't1' } } };
+  settleSignatures(d, { beforeOf: (id) => stored[id], notes: notesV2, signed: [], confirmed: [], me: bob, now: 't2' });
+  assert.equal(d.c1.signedBy, undefined);
+  assert.equal(d.c1.valueOk, undefined);
+  // Bob signs it for the new words
+  const d2 = { c1: { status: 'declared', note: 1, signedAt: 't3' } };
+  settleSignatures(d2, { beforeOf: () => d.c1, notes: notesV2, signed: ['c1'], me: bob, now: 't3' });
+  assert.equal(d2.c1.signedBy, 'Bob');
+  assert.equal(d2.c1.noteText, 'Zone D2: bore Ø25 becomes Ø25.7');
+});
+
+test('Confirm again stamps a fresh confirmation covering the current set-aside list', () => {
+  const stored = { __ack: { status: 'ack', signedAt: 't1', signedById: 'a', signedBy: 'Alice', asideCount: 2 } };
+  const d = { __ack: { status: 'ack', signedAt: 't2' } };
+  settleSignatures(d, { beforeOf: (id) => stored[id], signed: ['__ack'], me: bob, now: 't2', asideTotal: 5 });
+  assert.equal(d.__ack.signedBy, 'Bob');
+  assert.equal(d.__ack.asideCount, 5);
+});
+
+test('a note that does not read for a moment keeps the words its signature was given against', () => {
+  const stored = { c1: { status: 'declared', note: 1, signedAt: 't1', signedById: 'a', signedBy: 'Alice', noteText: 'Zone D2: bore Ø25 becomes Ø25.5' } };
+  const d = { c1: { status: 'declared', note: 1, signedAt: 't1' } };
+  settleSignatures(d, { beforeOf: (id) => stored[id], notes: [], me: bob, now: 't2' });
+  assert.equal(d.c1.signedBy, 'Alice');
+  assert.equal(d.c1.noteText, 'Zone D2: bore Ø25 becomes Ø25.5');
+  // and once it reads again with other words, the signature is gone
+  const d2 = { c1: { ...d.c1 } };
+  settleSignatures(d2, { beforeOf: () => d.c1, notes: notesV2, me: bob, now: 't3' });
+  assert.equal(d2.c1.signedBy, undefined);
+});

@@ -374,3 +374,11 @@ button { font: inherit; color: inherit; }
 .rl-mark.faded ellipse { opacity: 0.18; transition: opacity .2s; } .rl-mark.faded .tag { opacity: 0.4; }
 .rl-simulated { position: absolute; left: 12px; bottom: 12px; font: 600 12px var(--rl-font); color: var(--rl-graphite); background: rgba(255, 255, 255, 0.88); padding: 3px 9px; border-radius: 3px; }
 .rl-other-pdfs { list-style: none; margin: 0; padding: 0; } .rl-other-pdfs li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 0; }
+
+/* a selected text edit says its values in words under its cloud */
+.rl-textlabel rect { fill: rgba(255, 255, 255, 0.95); stroke: var(--rl-diazo); stroke-width: 1; }
+.rl-textlabel text { font: 600 13px var(--rl-letter); fill: var(--rl-graphite); }
+.rl-textlabel .old { fill: var(--rl-red); text-decoration: line-through; } .rl-textlabel .new { fill: var(--rl-diazo); }
+/* on the marked-up print the machinist's marks lead; the drawing's clouds step back */
+.rl-stage.mode-print .rl-cloud:not(.sel) > path { opacity: 0.45; }
+.rl-stage.mode-print .rl-cloud:not(.sel) .tag { opacity: 0.6; }

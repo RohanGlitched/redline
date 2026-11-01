@@ -3,7 +3,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
-import { ENGINE_VERSION, matchChanges, sameReview } from '../shared/review.mjs';
+import { ENGINE_VERSION, matchChanges, sameReview, settleSignatures } from '../shared/review.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
 
 export { verdictOf, notesFromAdf };
@@ -163,33 +163,9 @@ resolver.define('saveReview', async (req) => {
   if (sameRevs && !reread && !(req.payload.signed || []).length && !(req.payload.confirmed || []).length && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: stored.gate, decisions: stored.decisions };
   const me = await (await jira(route`/rest/api/3/myself`)).json();
   const signed = [];
-  // Signatures are never taken from the browser's copy of a decision. The caller names what they signed or
-  // confirmed in this save; anything else keeps the stored signature only while the decision, and the words
-  // of the note it was given against, are unchanged; otherwise it is dropped.
-  const signedIds = new Set((req.payload.signed || []).map(String)), confirmedIds = new Set((req.payload.confirmed || []).map(String));
+  // Signatures are never taken from the browser's copy of a decision (shared/review.mjs settleSignatures)
   const asideTotal = (r.setAside || []).length + (sameRevs && !reread ? (stored.setAside || []).filter((a) => !(r.setAside || []).some((b) => b.id === a.id)).length : 0);
-  for (const [id, d] of Object.entries(r.decisions || {})) {
-    const before = beforeOf(id);
-    // the note a decision is about: the note a change is declared in, or note N for "needs no drawing change"
-    const noteNo = d.status === 'declared' ? d.note : /^note(\d+)$/.test(id) ? +id.slice(4) : null;
-    const noteNow = noteNo != null ? notes.find((n) => n.n === noteNo) : null;
-    // (a note that does not read right now keeps the words it was signed against)
-    const noteText = noteNow ? noteKey(noteNow.text) : noteNo != null ? (before?.noteText ?? null) : null;
-    const same = !!before && before.status === d.status && (before.note ?? null) === (d.note ?? null)
-      && (before.noteText == null || noteText == null || before.noteText === noteText);
-    if (signedIds.has(id) && d.signedAt) {
-      d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id);
-      if (id === '__ack') d.asideCount = asideTotal; else delete d.asideCount;
-    } else if (same && before.signedById) {
-      d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy;
-      if (before.asideCount != null) d.asideCount = before.asideCount; else delete d.asideCount;
-    } else { delete d.signedAt; delete d.signedById; delete d.signedBy; delete d.asideCount; }
-    // "the drawing is right": named by Jira when confirmed now, kept only for the note's words it was given against
-    if (confirmedIds.has(id) && d.valueOk) d.valueOk = { by: me.displayName, byId: me.accountId, at: now, ...(noteText != null ? { noteText } : {}) };
-    else if (same && before?.valueOk && (before.valueOk.noteText == null || before.valueOk.noteText === noteText)) d.valueOk = before.valueOk;
-    else delete d.valueOk;
-    if (noteText != null) d.noteText = noteText; else delete d.noteText;
-  }
+  signed.push(...settleSignatures(r.decisions || {}, { beforeOf, notes, signed: req.payload.signed, confirmed: req.payload.confirmed, me, now, asideTotal }));
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
   // an earlier comparison found, and what was found about a change (its box, text and values) stays as
   // first recorded, so a review cannot be emptied or softened after the fact.
@@ -314,13 +290,17 @@ export const handler = resolver.getDefinitions();
 // Runs inside the transition. It reads the review from app storage (not the editable issue property),
 // recomputes the verdict, and checks that the review covers the newest PDF revision on the work item.
 export async function releaseGate(event) {
-  const key = event.issue?.key, id = event.issue?.id;
-  const res = await api.asApp().requestJira(route`/rest/api/3/issue/${key || id}?fields=attachment,description`);
-  // fail closed: if Jira cannot tell us what is attached, the release waits
-  if (!res.ok) return { result: false, errorMessage: `Redline could not read this work item's drawings (Jira answered ${res.status}). Try the transition again.` };
-  const issue = await res.json();
-  const v = verdictOf(issue.fields?.attachment, await kvs.get(reviewKey(issue.id)), notesFromAdf(issue.fields?.description));
-  return v.blocked ? { result: false, errorMessage: `Redline: ${v.text}. Open the light table on this work item to resolve it before release.` } : { result: true };
+  // fail closed: if anything cannot be read or checked, the release waits and says so
+  try {
+    const key = event.issue?.key, id = event.issue?.id;
+    const res = await api.asApp().requestJira(route`/rest/api/3/issue/${key || id}?fields=attachment,description`);
+    if (!res.ok) return { result: false, errorMessage: `Redline could not read this work item's drawings (Jira answered ${res.status}). Try the transition again.` };
+    const issue = await res.json();
+    const v = verdictOf(issue.fields?.attachment, await kvs.get(reviewKey(issue.id)), notesFromAdf(issue.fields?.description));
+    return v.blocked ? { result: false, errorMessage: `Redline: ${v.text}. Open the light table on this work item to resolve it before release.` } : { result: true };
+  } catch (e) {
+    return { result: false, errorMessage: 'Redline could not check the drawing review just now, so the release waits. Try the transition again in a minute.' };
+  }
 }
 
 // ---------- Rovo actions ----------
