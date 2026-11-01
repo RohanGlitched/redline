@@ -714,9 +714,12 @@ function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, o
 
 function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, onSign }) {
   const state = cloudState(d);
+  // the selected change scrolls into view in the ledger, wherever it was selected from
+  const rowRef = useRef(null);
+  useEffect(() => { if (active) rowRef.current?.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' }); }, [active]);
   if (state === 'signed' && !active) {
     return (
-      <li className={`rl-row signed compact ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
+      <li ref={rowRef} className={`rl-row signed compact ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
         <button className="rl-row-main" onClick={() => onSelect(c)}>
           <span className="delta">{c.n}</span>
           <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{d.status === 'declared' ? `Note ${d.note}` : 'Accepted'}, signed by {d.signedBy}</span>
@@ -725,7 +728,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
     );
   }
   return (
-    <li className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
+    <li ref={rowRef} className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
       <button className="rl-row-main" onClick={() => onSelect(c)}>
         <span className="delta">{c.n}</span>
         <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{kindText(c)}</span>
