@@ -13,6 +13,8 @@ const MODES = [
   { key: 'a', label: 'Rev A', hint: 'The earlier revision only' },
   { key: 'b', label: 'Rev B', hint: 'The new revision only' },
 ];
+const kindText = (c) => (c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
+  : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}` : KIND_TEXT[c.kind]);
 const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed', sheetAdded: 'Whole sheet added in this revision', sheetRemoved: 'Whole sheet removed in this revision' };
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -217,7 +219,7 @@ export default function LightTable() {
         const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
-          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values })),
+          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping })),
           sheets: sheetInfo,
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
           print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename }
@@ -559,11 +561,12 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
       <section className="rl-found">
         <h2>Found on the sheet <span>{res.clouds.length}</span></h2>
         <ul>
-          {res.clouds.map((c, i) => (
+          {res.clouds.filter((c) => !c.housekeeping).map((c, i) => (
             <CloudRow key={c.id} c={c} i={i} d={decisions[c.id] || {}} notes={order.notes} res={res}
               visible={i < shown} active={sel === c.id} onSelect={onSelect} onDecide={onDecide} onSign={onSign} />
           ))}
         </ul>
+        <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
       </section>
       <PrintSection order={order} res={res} print={print} marks={marks} markDecisions={markDecisions} sel={sel}
         onSelect={onSelect} onReadPhoto={onReadPhoto} onAddPhoto={onAddPhoto} onDecideMark={onDecideMark} onRaiseMark={onRaiseMark} onSetAside={onSetAside} />
@@ -681,6 +684,34 @@ function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect, readOnl
   );
 }
 
+// Housekeeping: labels nudged without changing and plot stamps (date, file, tool version) from a re-export.
+// Real differences, so they still need an answer, but one click accepts and signs them all.
+function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, onSign, readOnly }) {
+  const list = res.clouds.filter((c) => c.housekeeping);
+  const [open, setOpen] = useState(false);
+  if (!list.length) return null;
+  const todo = list.filter((c) => !(decisions[c.id]?.signedBy));
+  return (
+    <div className="rl-house">
+      <button className="rl-house-head" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span><b>Housekeeping</b> {list.length} {list.length === 1 ? 'difference' : 'differences'}: {list.filter((c) => c.housekeeping === 'stamp').length} plot stamp, {list.filter((c) => c.housekeeping === 'textMove').length} moved labels</span>
+        <span className="rl-house-state">{todo.length ? `${todo.length} to answer` : 'All answered'}</span>
+      </button>
+      {todo.length > 0 && !readOnly && (
+        <button className="rl-btn" onClick={() => { for (const c of todo) { onDecide(c.id, { status: 'accepted', note: null }); onSign(c.id); } }}>Accept and sign off all {todo.length}</button>
+      )}
+      {open && (
+        <ul>
+          {list.map((c, i) => (
+            <CloudRow key={c.id} c={c} i={i} d={decisions[c.id] || {}} notes={notes} res={res}
+              visible={true} active={sel === c.id} onSelect={onSelect} onDecide={onDecide} onSign={onSign} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, onSign }) {
   const state = cloudState(d);
   if (state === 'signed' && !active) {
@@ -697,7 +728,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
     <li className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
       <button className="rl-row-main" onClick={() => onSelect(c)}>
         <span className="delta">{c.n}</span>
-        <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{KIND_TEXT[c.kind]}</span>
+        <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{kindText(c)}</span>
         <Crop res={res} c={c} />
       </button>
       {(c.before || c.after) && (

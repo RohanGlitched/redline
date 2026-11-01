@@ -57,6 +57,37 @@ function textOf(c, textsA = [], textsB = [], T, k) {
   return { before, after, values: [...new Set(numbersIn(after).filter((v) => !old.has(v)))] };
 }
 
+// How far and which way a change's content moved, in millimetres on the sheet.
+function moveOf(m, dpi) {
+  if (!m) return undefined;
+  const mm = (Math.hypot(m.dx, m.dy) * 25.4) / dpi;
+  const dirs = [m.dx > 1 ? 'right' : m.dx < -1 ? 'left' : null, m.dy > 1 ? 'down' : m.dy < -1 ? 'up' : null].filter(Boolean);
+  return { mm: Math.round(mm * 10) / 10, dir: dirs.join(' and ') };
+}
+
+// The drawing text in the change reads the same before and after (it only moved or was re-plotted).
+function sameTextOf(c, textsA = [], textsB = [], T, k) {
+  const t = textOf(c, textsA, textsB, T, k);
+  if (t.before !== undefined) return false;
+  const pad = 10, hit = (w) => w.x1 / k >= c.x0 - pad && w.x0 / k <= c.x1 + pad && w.y1 / k >= c.y0 - pad && w.y0 / k <= c.y1 + pad;
+  return textsA.some(hit);
+}
+
+// Plot stamps: a re-exported PDF carries a new date, time, file path or tool version. These are real
+// differences but not engineering changes, so they are grouped as housekeeping for one-click review.
+const STAMP = /(\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?\b|[A-Z]:\\|\.(sch|kicad_sch|brd|dwg|sldprt|pdf)\b|\b\d+\.\d+\.\d+(-\w+)?\b|\bDate:|\bSheet:?\s*\d+\/\d+)/i;
+function isStamp(before, after) {
+  if (!before || !after) return false;
+  const strip = (s) => s.replace(new RegExp(STAMP.source, 'gi'), ' ').replace(/[\\/]/g, ' ').replace(/\s+/g, ' ').trim();
+  return STAMP.test(before) && STAMP.test(after) && (strip(before) === strip(after) || strip(before).length < 6);
+}
+
+function withHousekeeping(c) {
+  const textMove = !!c.move && c.sameText;
+  const stamp = isStamp(c.before, c.after);
+  return textMove || stamp ? { ...c, housekeeping: stamp ? 'stamp' : 'textMove' } : c;
+}
+
 // A sheet only one revision has: the whole sheet is one change, which has to be declared like any other.
 function wholeSheet(present, side, k) {
   const img = downsample(present, k);
@@ -179,7 +210,8 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
   const hiBw = k === 2 ? warpGray(hB, [p[0], p[1], p[2] * k, p[3], p[4], p[5] * k], hA.w, hA.h) : Bw;
   const clouds = r.clouds
     .sort((p, q) => p.y0 - q.y0 || p.x0 - q.x0)
-    .map((c, i) => ({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed, zone: zoneOf(c, A.w, A.h), ...textOf(c, hA.texts, hB.texts, r.transform, k) }));
+    .map((c, i) => withHousekeeping({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed,
+      zone: zoneOf(c, A.w, A.h), move: moveOf(c.moved, dpi), ...textOf(c, hA.texts, hB.texts, r.transform, k), sameText: sameTextOf(c, hA.texts, hB.texts, r.transform, k) }));
   return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes, page || 1), transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
 }
 
