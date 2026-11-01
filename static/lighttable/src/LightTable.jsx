@@ -247,6 +247,8 @@ export default function LightTable() {
   const snapOf = (ds, ms) => JSON.stringify([Object.entries(ds || {}).map(([id, d]) => [id, d.status ?? null, d.note ?? null, !!d.signedAt, !!d.valueOk]).sort(),
     Object.entries(ms || {}).map(([id, m]) => [id, m.status ?? null]).sort()]);
   const latestSnap = useRef(null), savedSnap = useRef(null), touchedRef = useRef(false);
+  // what this reviewer signed or confirmed since the last save: the server stamps only these, by name
+  const signedNow = useRef(new Set()), confirmedNow = useRef(new Set());
   latestSnap.current = snapOf(decisions, markDecisions);
   const markDecisionsRef = useRef(markDecisions); markDecisionsRef.current = markDecisions;
   const [closeWarned, setCloseWarned] = useState(false);
@@ -298,7 +300,8 @@ export default function LightTable() {
       saving.current = true;
       setSaved('Saving');
       try {
-        const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
+        const sentSigned = [...signedNow.current], sentConfirmed = [...confirmedNow.current];
+        const out = await invoke('saveReview', { baseVersion: versionRef.current, signed: sentSigned, confirmed: sentConfirmed, review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
           clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly })),
@@ -323,16 +326,22 @@ export default function LightTable() {
         versionRef.current = out?.version ?? versionRef.current;
         // take back what the server stamped (who signed, when), without disturbing decisions made since
         // (only when something actually changed: a new object here would trigger another save, forever)
+        // what was sent is now on the server; anything signed since waits for the next save
+        for (const id of sentSigned) signedNow.current.delete(id);
+        for (const id of sentConfirmed) confirmedNow.current.delete(id);
+        // the server's word on every signature: stamped, kept, or dropped (a rewritten note, a re-read), unless the
+        // reviewer has signed or changed that decision again since this save left
         if (out?.decisions) setDecisions((cur) => {
           let changed = false;
           const next = { ...cur };
-          for (const [id, d] of Object.entries(out.decisions)) {
-            const c = cur[id];
-            if (!(c && c.status === d.status && (c.note ?? null) === (d.note ?? null) && !!c.signedAt === !!d.signedAt)) continue;
-            const valueOk = d.valueOk ?? c.valueOk;
-            if (c.signedAt === d.signedAt && c.signedBy === d.signedBy && (c.noteText ?? null) === (d.noteText ?? null) && (c.asideCount ?? null) === (d.asideCount ?? null) && JSON.stringify(c.valueOk ?? null) === JSON.stringify(valueOk ?? null)) continue;
-            next[id] = { ...c, signedAt: d.signedAt, signedBy: d.signedBy, valueOk, ...(d.noteText != null ? { noteText: d.noteText } : {}), ...(d.asideCount != null ? { asideCount: d.asideCount } : {}) };
-            changed = true;
+          const fields = ['signedAt', 'signedBy', 'valueOk', 'noteText', 'asideCount'];
+          for (const [id, c] of Object.entries(cur)) {
+            const d = out.decisions[id];
+            if (!d || c.status !== d.status || (c.note ?? null) !== (d.note ?? null) || signedNow.current.has(id) || confirmedNow.current.has(id)) continue;
+            if (fields.every((f) => JSON.stringify(c[f] ?? null) === JSON.stringify(d[f] ?? null))) continue;
+            const v = { ...c };
+            for (const f of fields) { if (d[f] == null) delete v[f]; else v[f] = d[f]; }
+            next[id] = v; changed = true;
           }
           return changed ? next : cur;
         });
@@ -386,6 +395,7 @@ export default function LightTable() {
   }, [phase, res]);
   const decide = (id, patch) => {
     if (readOnly) return;
+    if (patch.valueOk) confirmedNow.current.add(id);
     touchedRef.current = true;
     setDecisions((d) => {
       const cur = d[id] || {};
@@ -393,7 +403,7 @@ export default function LightTable() {
       return { ...d, [id]: { ...cur, ...(moved ? { signedBy: null, signedAt: null, valueOk: null } : {}), ...patch } };
     });
   };
-  const signOff = (id) => decide(id, { signedBy: order.user.displayName, signedAt: new Date().toISOString() });
+  const signOff = (id) => { signedNow.current.add(id); decide(id, { signedBy: order.user.displayName, signedAt: new Date().toISOString() }); };
   // a reviewer who disagrees with the engine counts a set-aside difference back in: it becomes a change
   // like any other, open until it is declared or accepted and signed
   const countBack = (a) => {
@@ -731,6 +741,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
         </ul>
         <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <SetAside list={aside[res.sheet] || []} showing={showAside} onShow={onShowAside} onCountBack={onCountBack} readOnly={order.canEdit === false} />
+        <OtherPdfs list={order.otherPdfs || []} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <Confirm gate={gate} d={decisions.__ack || {}} asideCount={Object.values(aside || {}).flat().length} revs={[res.revA, res.revB]} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
       </section>
       <PrintSection order={order} res={res} print={print} marks={marks} markDecisions={markDecisions} sel={sel}
@@ -870,6 +881,28 @@ function priorDecisions(review, clouds, sheetNo) {
 
 // What the engine set aside: line work that a re-export nudged by under 0.7 mm and that matches once
 // shifted. Not counted as changes, but never hidden: each one can be shown on the sheet and counted back in.
+// Other PDFs on the work item (an ECO form, a test report): not compared, and set aside by name so the release
+// gate knows someone looked at them.
+function OtherPdfs({ list, decisions, onDecide, onSign, readOnly }) {
+  if (!list.length) return null;
+  return (
+    <div className="rl-confirm">
+      <p>Also attached, not compared as drawing revisions:</p>
+      <ul className="rl-other-pdfs">
+        {list.map((a) => {
+          const d = decisions[`pdf${a.id}`] || {};
+          return (
+            <li key={a.id}><span>{a.filename}</span>
+              {d.signedBy ? <em> set aside by {d.signedBy}</em>
+                : !readOnly && <button className="rl-btn quiet" onClick={() => { onDecide(`pdf${a.id}`, { status: 'aside' }); onSign(`pdf${a.id}`); }}>Set aside: not a drawing</button>}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // A review that found nothing, or set line work aside, is confirmed by one named person before it can clear.
 function Confirm({ gate, d, asideCount, onDecide, onSign, readOnly }) {
   if (!gate || (!gate.unconfirmed && !d.signedBy)) return null;

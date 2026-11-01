@@ -24,7 +24,8 @@ export const noteKey = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 export function noteSlip(cloud, noteText) {
   if (!cloud?.before || !cloud?.after || noteText == null) return [];
   const text = String(noteText).replace(/\b(zones?|sheets?)\s+[A-Z]?\d{1,3}(\s*(,|and|&)\s*[A-Z]?\d{1,3})*/gi, ' ');
-  const said = [...text.matchAll(/(?:[Ø⌀∅±]\s*|(?<![A-Za-z])[RM]\s?)(\d*[.,]?\d+)|(\d*[.,]?\d+)\s*(?:°|mm\b)/g)].map((m) => parseFloat((m[1] ?? m[2]).replace(',', '.')));
+  const said = [...text.matchAll(/(?:[Ø⌀∅±]\s*|(?<![A-Za-z])[RM]\s?)(\d*[.,]?\d+)|(\d*[.,]?\d+)\s*(?:°|mm\b|"|in\b)|(\d*[.,]?\d+)\s*(?:to|→|->|becomes)\s*[Ø⌀∅R]?\s*(\d*[.,]?\d+)/g)]
+    .flatMap((m) => (m[3] != null ? [m[3], m[4]] : [m[1] ?? m[2]])).map((v) => parseFloat(v.replace(',', '.')));
   const before = numbersIn(cloud.before), after = numbersIn(cloud.after);
   if (!said.some((v) => before.includes(v))) return [];
   return [...new Set(said.filter((v) => !before.includes(v) && !after.includes(v)))];
@@ -55,7 +56,11 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   const unseen = sheets && sheets.count > 1 ? sheets.count - new Set(sheets.done || []).size : 0;
   // every numbered note is carried out on the drawing, or a named person says it needs no drawing change
   const unmet = notes?.length && (!sheets || sheets.count <= 1 || new Set(sheets.done || []).size >= sheets.count)
-    ? notes.filter((nt) => !clouds.some((c) => decisions[c.id]?.status === 'declared' && decisions[c.id]?.note === nt.n) && !decisions[`note${nt.n}`]?.signedBy).length : 0;
+    ? notes.filter((nt) => {
+      if (clouds.some((c) => decisions[c.id]?.status === 'declared' && decisions[c.id]?.note === nt.n)) return false;
+      const x = decisions[`note${nt.n}`];
+      return !(x?.signedBy && (x.noteText == null || x.noteText === noteKey(nt.text)));
+    }).length : 0;
   const needsAck = !clouds.length || (extra.setAside || 0) > 0;
   const ack = decisions.__ack;
   const unconfirmed = needsAck && (!ack?.signedBy || (ack.asideCount != null && (extra.setAside || 0) > ack.asideCount)) ? 1 : 0;
@@ -97,7 +102,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
 export function drawingOf(filename) {
   const base = String(filename || '').replace(/\.[a-z0-9]+$/i, '');
   // (the same strict reading as revision names: "review" or "revs" are not a revision)
-  const m = /^(.*?)[-_ .]*(?<![A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*(?:[A-Z]{1,2}|\d{1,3})(?:[-_ ][a-z]+)?$/.exec(base);
+  const m = /^(.*?)[-_ .]*(?<![A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*(?:[A-Za-z]{1,2}\d{0,2}|\d{1,3})(?:[-_ ]+\(?[A-Za-z0-9]+\)?)*$/.exec(base);
   return m && m[1] ? m[1].toLowerCase().replace(/[-_ .]+$/, '') : null;
 }
 
@@ -127,6 +132,11 @@ export function verdictOf(attachments, review, notes = null) {
     return review ? { blocked: true, text: 'a reviewed drawing revision was removed from the work item' } : { blocked: false, none: true };
   }
   if (!review) return { blocked: true, text: 'the two latest drawing revisions have not been compared yet' };
+  const reviewedB = (attachments || []).find((a) => +a.id === +review.revB?.id);
+  const unplaced = reviewedB ? (attachments || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''))
+    && !pdfs.some((p) => +p.id === +a.id) && (Date.parse(a.created) > Date.parse(reviewedB.created) || +a.id > +reviewedB.id)
+    && !review.decisions?.[`pdf${a.id}`]?.signedBy) : [];
+  if (unplaced.length) return { blocked: true, text: `${unplaced.map((a) => a.filename).join(', ')} was attached after the reviewed revision and is not compared; open the light table to compare it or set it aside as not a drawing` };
   const [a, b] = pdfs.slice(-2);
   if (+review.revB?.id !== +b.id) return { blocked: true, text: 'a newer drawing revision was attached after the last review' };
   if (review.revA?.id && +review.revA.id !== +a.id) return { blocked: true, text: 'the review compared a different pair of revisions' };

@@ -52,6 +52,9 @@ export async function loadChangeOrder(key) {
     notes: notesFromAdf(issue.fields.description),
     attachments,
     drawingConflict: pick.conflict || 0,
+    // PDFs that are not this drawing's revisions (an ECO form, a test report): each can be set aside by name
+    otherPdfs: (issue.fields.attachment || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')) && !pick.pdfs.some((p) => +p.id === +a.id))
+      .map((a) => ({ id: +a.id, filename: a.filename, created: a.created })),
     review,
     // the same verdict the release validator would give right now
     verdict: verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description)),
@@ -157,32 +160,35 @@ resolver.define('saveReview', async (req) => {
   const stillAttached = (id) => (issue.fields.attachment || []).some((a) => +a.id === +id);
   if (sameRevs && !r.print && stored.print && stillAttached(stored.print.id)) { r.print = stored.print; r.marks = stored.marks || []; r.markDecisions = { ...(stored.markDecisions || {}), ...(r.markDecisions || {}) }; }
   // nothing changed since the last save (the light table saves once when it opens): no write, no audit entry
-  if (sameRevs && !reread && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: stored.gate, decisions: stored.decisions };
+  if (sameRevs && !reread && !(req.payload.signed || []).length && !(req.payload.confirmed || []).length && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: stored.gate, decisions: stored.decisions };
   const me = await (await jira(route`/rest/api/3/myself`)).json();
   const signed = [];
+  // Signatures are never taken from the browser's copy of a decision. The caller names what they signed or
+  // confirmed in this save; anything else keeps the stored signature only while the decision, and the words
+  // of the note it was given against, are unchanged; otherwise it is dropped.
+  const signedIds = new Set((req.payload.signed || []).map(String)), confirmedIds = new Set((req.payload.confirmed || []).map(String));
+  const asideTotal = (r.setAside || []).length + (sameRevs && !reread ? (stored.setAside || []).filter((a) => !(r.setAside || []).some((b) => b.id === a.id)).length : 0);
   for (const [id, d] of Object.entries(r.decisions || {})) {
     const before = beforeOf(id);
-    // the note text a declared change is signed against, as Jira has it now
-    const noteNow = d.status === 'declared' ? notes.find((n) => n.n === d.note) : null;
-    const noteText = noteNow ? noteKey(noteNow.text) : null;
-    // a signature stands only while the decision it signed (status, note and the note's words) is unchanged
-    const same = before && before.status === d.status && (before.note ?? null) === (d.note ?? null) && (before.noteText == null || noteText == null || before.noteText === noteText);
-    // the note was rewritten since it was signed: the old signature the browser still holds no longer counts
-    if (before?.signedAt && d.signedAt === before.signedAt && before.noteText != null && noteText != null && before.noteText !== noteText) delete d.signedAt;
-    if (reread && !(same && before?.signedById)) { delete d.signedAt; delete d.valueOk; }
+    // the note a decision is about: the note a change is declared in, or note N for "needs no drawing change"
+    const noteNo = d.status === 'declared' ? d.note : /^note(\d+)$/.test(id) ? +id.slice(4) : null;
+    const noteNow = noteNo != null ? notes.find((n) => n.n === noteNo) : null;
+    // (a note that does not read right now keeps the words it was signed against)
+    const noteText = noteNow ? noteKey(noteNow.text) : noteNo != null ? (before?.noteText ?? null) : null;
+    const same = !!before && before.status === d.status && (before.note ?? null) === (d.note ?? null)
+      && (before.noteText == null || noteText == null || before.noteText === noteText);
+    if (signedIds.has(id) && d.signedAt) {
+      d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id);
+      if (id === '__ack') d.asideCount = asideTotal; else delete d.asideCount;
+    } else if (same && before.signedById) {
+      d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy;
+      if (before.asideCount != null) d.asideCount = before.asideCount; else delete d.asideCount;
+    } else { delete d.signedAt; delete d.signedById; delete d.signedBy; delete d.asideCount; }
+    // "the drawing is right": named by Jira when confirmed now, kept only for the note's words it was given against
+    if (confirmedIds.has(id) && d.valueOk) d.valueOk = { by: me.displayName, byId: me.accountId, at: now, ...(noteText != null ? { noteText } : {}) };
+    else if (same && before?.valueOk && (before.valueOk.noteText == null || before.valueOk.noteText === noteText)) d.valueOk = before.valueOk;
+    else delete d.valueOk;
     if (noteText != null) d.noteText = noteText; else delete d.noteText;
-    if (d.signedAt && same && before.signedById) { d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy; if (before.asideCount != null) d.asideCount = before.asideCount; }
-    // the signer is whoever is calling, named by Jira, never a name the browser sent
-    else if (d.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); if (id === '__ack') d.asideCount = (r.setAside || []).length + ((sameRevs && !reread ? (stored.setAside || []).filter((a) => !(r.setAside || []).some((b) => b.id === a.id)).length : 0)); }
-    if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
-    // "the drawing is right" on a value slip is a decision too: named by Jira, kept as first recorded
-    // "the drawing is right" is kept as first recorded, for the note's words; a rewritten note drops it
-    if (d.valueOk) {
-      const kept = same && before?.valueOk && (before.valueOk.noteText == null || before.valueOk.noteText === noteText) ? before.valueOk : null;
-      if (kept) d.valueOk = kept;
-      else if (before?.valueOk && (before.valueOk.noteText ?? noteText) !== noteText && d.valueOk.at === before.valueOk.at) delete d.valueOk;
-      else d.valueOk = { by: me.displayName, byId: me.accountId, at: now, ...(noteText != null ? { noteText } : {}) };
-    }
   }
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
   // an earlier comparison found, and what was found about a change (its box, text and values) stays as
@@ -196,11 +202,13 @@ resolver.define('saveReview', async (req) => {
     r.setAside = [...(r.setAside || []), ...(stored.setAside || []).filter((a) => !asideIds.has(a.id))];
     const done = new Set([...(r.sheets?.done || []), ...(stored.sheets?.done || [])]);
     r.sheets = { count: Math.max(r.sheets?.count || 1, stored.sheets?.count || 1), done: [...done].sort((x, y) => x - y) };
-    // pen markups belong to one photo: a newer photo's markups replace an older photo's, never mix with them
-    if (+stored.print?.id === +r.print?.id) {
-      const mids = new Set((r.marks || []).map((m) => m.id));
-      r.marks = [...(r.marks || []), ...(stored.marks || []).filter((m) => !mids.has(m.id))];
-    }
+    // pen markups found earlier stay: those of the same photo, and those of an earlier photo nobody answered
+    // (a newer photo never wipes a machinist's open question); answered ones of an earlier photo are history
+    const mids = new Set((r.marks || []).map((m) => m.id));
+    const answered = (m) => ['raised', 'covered', 'dismissed'].includes(stored.markDecisions?.[m.id]?.status);
+    const keep = (stored.marks || []).filter((m) => !mids.has(m.id) && (+stored.print?.id === +r.print?.id || !answered(m)));
+    r.marks = [...(r.marks || []), ...keep];
+    r.markDecisions = { ...Object.fromEntries(keep.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v)), ...(r.markDecisions || {}) };
   }
   const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes, { setAside: (r.setAside || []).length });
   // who answered each pen markup, and who set a photo aside, as Jira names them

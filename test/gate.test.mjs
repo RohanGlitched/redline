@@ -359,3 +359,12 @@ test('no change on the drawing: notes still have to be carried out, and someone 
 test('revision names may carry a short suffix', () => {
   assert.equal(drawingOf('BRKT-0142 rev D-signed.pdf'), 'brkt-0142');
 });
+
+test('a PDF attached after the reviewed revision that Redline cannot place holds the release until set aside by name', () => {
+  const pdf = (id, filename) => ({ id, filename, mimeType: 'application/pdf', created: `2026-11-02T0${id}:00:00Z` });
+  const review = { revA: { id: 1 }, revB: { id: 2 }, clouds: [], decisions: { __ack: { status: 'ack', signedBy: 'Asha' } } };
+  const atts = [pdf(1, 'BRKT-0142_rev-C.pdf'), pdf(2, 'BRKT-0142_rev-D.pdf'), pdf(3, 'BRKT-0142-E.pdf')];
+  assert.match(verdictOf(atts, review).text, /not compared/);
+  assert.equal(verdictOf(atts, { ...review, decisions: { ...review.decisions, pdf3: { status: 'aside', signedBy: 'Asha' } } }).blocked, false);
+  assert.equal(drawingOf('BRKT-0142 Rev E (released).pdf'), 'brkt-0142');
+});
