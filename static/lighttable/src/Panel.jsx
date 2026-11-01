@@ -36,7 +36,7 @@ export default function Panel() {
     load(); // the light table saved its review; refresh the summary
   }
 
-  if (err) return <div className="rl-panel"><p className="err">Redline could not read this work item: {err}</p></div>;
+  if (err) return <div className="rl-panel"><p className="err">Redline could not read this work item: {err}</p><button className="rl-btn" onClick={() => { setErr(null); load(); }}>Try again</button></div>;
   if (!o) return <div className="rl-panel"><div className="sk" /><div className="sk short" /></div>;
 
   const pdfs = o.attachments;
@@ -50,13 +50,14 @@ export default function Panel() {
             <p className="lead">Attach two PDF revisions of the drawing, the earlier one first</p>
             <p className="sub">Redline lines them up, clouds every change, and checks each one against the numbered change notes in the description, such as "1. Zone D2: bore Ø25 to Ø25.5".</p>
           </div>
-          <button className="rl-btn" disabled={adding} onClick={addSample}>{adding ? 'Adding sample…' : 'Add a sample change order'}</button>
+          {o.canEdit !== false && <button className="rl-btn" disabled={adding} onClick={addSample}>{adding ? 'Adding sample…' : 'Add a sample change order'}</button>}
         </div>
       </div>
     );
   }
   // the verdict the backend recomputed when the review was saved (the same one the release gate uses)
-  const gate = r ? (r.gate ? { ...r.gate, blocked: r.gate.status === 'blocked' } : gateOf(r.clouds, r.decisions)) : null;
+  // the backend's verdict covers what the saved gate cannot see: a newer revision or an unread photo
+  const gate = r ? (o.verdict ? { ...o.verdict, blocked: !!o.verdict.blocked } : r.gate ? { ...r.gate, blocked: r.gate.status === 'blocked' } : gateOf(r.clouds, r.decisions)) : null;
   const multi = (r?.sheets?.count || 1) > 1;
   const thumbs = o.thumbs || [];
   return (
@@ -65,7 +66,7 @@ export default function Panel() {
         <span className="dot" aria-hidden="true" />
         <div>
           <p className="lead">{!gate ? 'Not compared yet' : gate.blocked ? 'Release blocked' : 'Ready to release'}</p>
-          <p className="sub">{!gate ? `${pdfs[pdfs.length - 2].filename} and ${pdfs[pdfs.length - 1].filename} are attached.` : gate.text}</p>
+          <p className="sub">{!gate ? `${pdfs[pdfs.length - 2].filename} and ${pdfs[pdfs.length - 1].filename} are attached.` : cap(gate.text)}</p>
         </div>
         <button className="rl-btn primary" onClick={open}>{gate ? 'Open light table' : 'Compare revisions'}</button>
       </div>
@@ -138,6 +139,8 @@ function Thumb({ t, clouds, decisions, label, onOpen }) {
     </figure>
   );
 }
+
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
 function ago(iso) {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);

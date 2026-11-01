@@ -1,40 +1,21 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
-import { gateOf } from '../shared/gate.mjs';
+import { gateOf, verdictOf } from '../shared/gate.mjs';
+import { notesFromAdf } from '../shared/notes.mjs';
+
+export { verdictOf, notesFromAdf };
 
 // The review of record lives in the app's own storage, which no user or REST call can edit; the backend
 // recomputes the gate from the saved decisions and stamps every sign-off with the signer's account.
 // A copy of the verdict is written to an issue property only so JQL can search it (`redlineGate`).
 const PROP = 'redline-review';
 const reviewKey = (issueId) => `review:${issueId}`;
+const auditKey = (issueId) => `audit:${issueId}`;
+
 
 // ---------- reading a change order ----------
 
-// Change notes are the numbered lines of the description: an ordered list, or paragraphs that start
-// with "1." / "2)". Each becomes { n, text } so clouds can be declared against a line number.
-export function notesFromAdf(doc) {
-  const notes = [];
-  const text = (node) => (node.type === 'text' ? node.text : (node.content || []).map(text).join(node.type === 'paragraph' ? '\n' : ''));
-  const walk = (node) => {
-    if (!node) return;
-    if (node.type === 'orderedList') {
-      let n = node.attrs?.order || 1;
-      for (const item of node.content || []) notes.push({ n: n++, text: text(item).trim() });
-      return;
-    }
-    if (node.type === 'paragraph') {
-      for (const line of text(node).split('\n')) {
-        const m = line.match(/^\s*(\d{1,2})[.)]\s+(.+)/);
-        if (m) notes.push({ n: +m[1], text: m[2].trim() });
-      }
-      return;
-    }
-    (node.content || []).forEach(walk);
-  };
-  walk(doc);
-  return notes;
-}
 
 async function jira(path, init) {
   const res = await api.asUser().requestJira(path, init);
@@ -66,6 +47,8 @@ export async function loadChangeOrder(key) {
     notes: notesFromAdf(issue.fields.description),
     attachments,
     review,
+    // the same verdict the release validator would give right now
+    verdict: verdictOf(issue.fields.attachment, review),
   };
 }
 
@@ -109,9 +92,16 @@ resolver.define('saveThumb', async (req) => {
 // The bridge cannot carry binary bodies, so the resolver fetches the PDF as the user (their permissions
 // apply) and hands it over as base64, in slices that stay under Forge's 5 MB response cap.
 const SLICE = 3_000_000, MAX = 40_000_000;
+let lastFile = null; // { id, account, buf, at }: reused by the next slice while the function is warm
 resolver.define('getAttachment', async (req) => {
-  const res = await jira(route`/rest/api/3/attachment/content/${String(req.payload.id)}`);
-  const buf = Buffer.from(await res.arrayBuffer());
+  const id = String(req.payload.id), account = req.context.accountId;
+  let buf;
+  if (lastFile && lastFile.id === id && lastFile.account === account && Date.now() - lastFile.at < 60000) buf = lastFile.buf;
+  else {
+    const res = await jira(route`/rest/api/3/attachment/content/${id}`);
+    buf = Buffer.from(await res.arrayBuffer());
+    lastFile = { id, account, buf, at: Date.now() };
+  }
   if (buf.length > MAX) throw new Error(`This file is ${(buf.length / 1e6).toFixed(0)} MB; Redline reads drawings up to 40 MB`);
   const offset = req.payload.offset || 0;
   return { size: buf.length, offset, data: buf.subarray(offset, offset + SLICE).toString('base64') };
@@ -135,16 +125,33 @@ resolver.define('saveReview', async (req) => {
   const base = req.payload.baseVersion || 0;
   if (stored && (stored.version || 0) !== base) return { conflict: true, review: stored };
   const r = req.payload.review, now = new Date().toISOString();
+  const me = await (await jira(route`/rest/api/3/myself`)).json();
+  const signed = [];
   for (const [id, d] of Object.entries(r.decisions || {})) {
     const before = stored?.decisions?.[id];
-    if (d.signedAt && d.signedAt !== before?.signedAt) { d.signedById = req.context.accountId; d.signedAt = now; }
-    else if (before?.signedById && d.signedAt === before.signedAt) d.signedById = before.signedById;
+    // the signer is whoever is calling, named by Jira, never a name the browser sent
+    if (d.signedAt && d.signedAt !== before?.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); }
+    else if (before?.signedById && d.signedAt === before.signedAt) { d.signedById = before.signedById; d.signedBy = before.signedBy; }
     if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
+  }
+  // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
+  // an earlier comparison found, so a review cannot be emptied after the fact.
+  if (stored && +stored.revA?.id === +r.revA?.id && +stored.revB?.id === +r.revB?.id) {
+    const ids = new Set((r.clouds || []).map((c) => c.id));
+    r.clouds = [...(r.clouds || []), ...(stored.clouds || []).filter((c) => !ids.has(c.id))];
+    const done = new Set([...(r.sheets?.done || []), ...(stored.sheets?.done || [])]);
+    r.sheets = { count: Math.max(r.sheets?.count || 1, stored.sheets?.count || 1), done: [...done].sort((x, y) => x - y) };
+    const mids = new Set((r.marks || []).map((m) => m.id));
+    r.marks = [...(r.marks || []), ...(stored.marks || []).filter((m) => !mids.has(m.id))];
   }
   const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets);
   const review = { ...r, gate, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
   await kvs.set(reviewKey(issue.id), review);
-  // searchable copy for JQL; the validator never reads it
+  // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
+  const audit = (await kvs.get(auditKey(issue.id))) || [];
+  audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed });
+  await kvs.set(auditKey(issue.id), audit.slice(-200));
+  // searchable copy for JQL only; the validator, the gadget and Rovo recompute from app storage
   await api.asApp().requestJira(route`/rest/api/3/issue/${key}/properties/${PROP}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ gate: { status: gate.status, text: gate.text, open: gate.open }, revB: r.revB, version: review.version }),
@@ -213,15 +220,12 @@ export const handler = resolver.getDefinitions();
 // recomputes the verdict, and checks that the review covers the newest PDF revision on the work item.
 export async function releaseGate(event) {
   const key = event.issue?.key, id = event.issue?.id;
-  const issue = await (await api.asApp().requestJira(route`/rest/api/3/issue/${key || id}?fields=attachment`)).json();
-  const pdfs = (issue.fields?.attachment || []).filter((a) => a.mimeType === 'application/pdf');
-  if (pdfs.length < 2) return { result: true };
-  const review = await kvs.get(reviewKey(issue.id));
-  if (!review) return { result: false, errorMessage: 'Redline: compare the two latest drawing revisions on the light table before release.' };
-  const latest = Math.max(...pdfs.map((a) => +a.id));
-  if (+review.revB?.id !== latest) return { result: false, errorMessage: 'Redline: a newer drawing revision was attached after the last review. Review it on the light table before release.' };
-  const gate = gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {}, review.sheets);
-  return gate.blocked ? { result: false, errorMessage: `Redline: ${gate.text}. Resolve them on the light table before release.` } : { result: true };
+  const res = await api.asApp().requestJira(route`/rest/api/3/issue/${key || id}?fields=attachment`);
+  // fail closed: if Jira cannot tell us what is attached, the release waits
+  if (!res.ok) return { result: false, errorMessage: `Redline could not read this work item's drawings (Jira answered ${res.status}). Try the transition again.` };
+  const issue = await res.json();
+  const v = verdictOf(issue.fields?.attachment, await kvs.get(reviewKey(issue.id)));
+  return v.blocked ? { result: false, errorMessage: `Redline: ${v.text}. Open the light table on this work item to resolve it before release.` } : { result: true };
 }
 
 // ---------- Rovo actions ----------
@@ -256,33 +260,36 @@ export async function getDrawingReview(payload) {
   return describe(await loadChangeOrder(key));
 }
 
-// The dashboard gadget: blocked change orders with their reason, plus how many are ready to release.
-resolver.define('gadget', async () => {
-  const out = await findBlockedChangeOrders({});
-  const count = async (jql) => {
-    const res = await api.asUser().requestJira(route`/rest/api/3/search/approximate-count`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jql }),
-    });
-    return res.ok ? (await res.json()).count : null;
+// Change orders Redline has reviewed, each with its verdict recomputed from app storage. The issue
+// property only narrows the search; a hand-edited property cannot make a held change order look clear.
+async function reviewedChangeOrders(projectKey) {
+  const project = projectKey ? ` AND project = "${String(projectKey).replace(/"/g, '')}"` : '';
+  const jql = `redlineGate IS NOT EMPTY${project} ORDER BY updated DESC`;
+  const res = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jql, maxResults: 100, fields: ['summary', 'status', 'attachment'] }),
+  });
+  if (!res.ok) return { error: `Search failed (${res.status}).` };
+  const issues = (await res.json()).issues || [];
+  const reviews = await Promise.all(issues.map((i) => kvs.get(reviewKey(i.id))));
+  return {
+    items: issues.map((i, k) => {
+      const v = verdictOf(i.fields.attachment, reviews[k]);
+      return { key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text };
+    }),
   };
-  const [blocked, clear] = await Promise.all([count('redlineGate = "blocked"'), count('redlineGate = "clear"')]);
-  return { ...out, blocked, clear };
+}
+
+// The dashboard gadget: change orders held by Redline with the reason, and how many are ready to release.
+resolver.define('gadget', async () => {
+  const r = await reviewedChangeOrders();
+  if (r.error) return r;
+  const held = r.items.filter((x) => x.blocked);
+  return { changeOrders: held.slice(0, 20), blocked: held.length, clear: r.items.length - held.length };
 });
 
 export async function findBlockedChangeOrders(payload) {
-  const project = payload.projectKey ? ` AND project = "${String(payload.projectKey).replace(/"/g, '')}"` : '';
-  const jql = `redlineGate = "blocked"${project} ORDER BY updated DESC`;
-  const res = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jql, maxResults: 20, fields: ['summary', 'status'], properties: [PROP] }),
-  });
-  if (!res.ok) return { error: `Search failed (${res.status}).` };
-  const data = await res.json();
-  return {
-    jql,
-    changeOrders: (data.issues || []).map((i) => {
-      const r = i.properties?.[PROP];
-      return { key: i.key, summary: i.fields.summary, status: i.fields.status?.name, gate: r?.gate?.text };
-    }),
-  };
+  const r = await reviewedChangeOrders(payload?.projectKey);
+  if (r.error) return r;
+  return { changeOrders: r.items.filter((x) => x.blocked).slice(0, 20).map(({ blocked, ...x }) => x) };
 }

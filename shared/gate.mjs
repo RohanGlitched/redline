@@ -25,3 +25,26 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   else text = `All ${clouds.length} changes declared and signed off`;
   return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, markups, unseen, text };
 }
+
+// The release verdict for one work item, from its PDF attachments and the review in app storage. The
+// workflow validator, the dashboard gadget and the Rovo actions all use this, never the issue property.
+export function verdictOf(attachments, review) {
+  const pdfs = (attachments || []).filter((a) => a.mimeType === 'application/pdf')
+    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id);
+  if (pdfs.length < 2) {
+    // a work item that never had two revisions is not a drawing change; one whose reviewed PDF was
+    // deleted afterwards must not slip through
+    return review ? { blocked: true, text: 'a reviewed drawing revision was removed from the work item' } : { blocked: false, none: true };
+  }
+  if (!review) return { blocked: true, text: 'the two latest drawing revisions have not been compared yet' };
+  const [a, b] = pdfs.slice(-2);
+  if (+review.revB?.id !== +b.id) return { blocked: true, text: 'a newer drawing revision was attached after the last review' };
+  if (review.revA?.id && +review.revA.id !== +a.id) return { blocked: true, text: 'the review compared a different pair of revisions' };
+  // the newest photo on the work item must be the print the review read (or set aside as not a print)
+  const photos = (attachments || []).filter((x) => /^image\/(jpeg|png|webp)$/.test(x.mimeType))
+    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id);
+  if (photos.length && +review.print?.id !== +photos[photos.length - 1].id) {
+    return { blocked: true, text: 'the newest photo of a marked-up print has not been read on the light table' };
+  }
+  return gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {}, review.sheets);
+}

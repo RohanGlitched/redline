@@ -27,7 +27,7 @@ The ledger lists each change with before-and-after crops. Arrow keys step throug
 
 **Marked-up prints.** Attach a phone photo of the printed sheet. Redline finds the sheet in the photo, flattens it onto revision B, separates pen red from red printed on the drawing, and lists each markup. Every markup must be raised as a work item, covered by a change, or dismissed before release.
 
-**Release gate.** A workflow validator that refuses the release transition until the review is complete. It reads the review from app storage, never from anything a user can edit, and it re-checks that the review covers the newest PDF. See [Set up the release gate](docs/release-gate.md).
+**Release gate.** A workflow validator that refuses the release transition until the review is complete. It reads the review from Redline's own app storage rather than from an issue property, re-checks that the review covers the two newest PDFs, and fails closed if Jira cannot say what is attached. See [Set up the release gate](docs/release-gate.md).
 
 **Search and Rovo.** `redlineGate = "blocked"` in JQL finds blocked change orders. The *Drawing change checker* Rovo agent answers questions such as *"What changed on ENG-1, and is it declared?"*
 

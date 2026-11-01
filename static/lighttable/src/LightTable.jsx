@@ -13,7 +13,7 @@ const MODES = [
   { key: 'a', label: 'Rev A', hint: 'The earlier revision only' },
   { key: 'b', label: 'Rev B', hint: 'The new revision only' },
 ];
-const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed' };
+const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed', sheetAdded: 'Whole sheet added in this revision', sheetRemoved: 'Whole sheet removed in this revision' };
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function useCanvasImage(img) {
@@ -62,7 +62,7 @@ export default function LightTable() {
       for (const c of clouds) next[c.id] = next[c.id] || (c.note ? { status: 'declared', note: c.note } : { status: 'open' });
       return next;
     });
-    const count = Math.min(r.pages[0], r.pages[1]);
+    const count = Math.max(r.pages[0], r.pages[1]); // a sheet only one revision has still needs a review
     setSheets((x) => ({ count, compared: { ...x.compared, [n]: clouds } }));
     setRes({ ...r, clouds, revA, revB, sheet: n });
   }, []);
@@ -167,7 +167,12 @@ export default function LightTable() {
 
   useEffect(() => {
     // a photographed print is of the first sheet unless someone says otherwise
-    if (phase === 'ready' && !print && res?.sheet === 1 && order?.images?.length) readPhoto(order.images[order.images.length - 1]);
+    if (phase === 'ready' && !print && res?.sheet === 1 && order?.images?.length) {
+      const last = order.images[order.images.length - 1];
+      // a photo someone already set aside as not a print stays set aside
+      if (order.review?.print?.setAside && +order.review.print.id === +last.id) setPrint({ att: last, status: 'aside' });
+      else readPhoto(last);
+    }
   }, [phase]);
 
   async function addPhoto(file) {
@@ -195,7 +200,7 @@ export default function LightTable() {
     } catch (e) { decideMark(m.id, { status: 'open', error: e.message }); }
   }
 
-  // Autosave the review onto the work item (an issue property the release validator reads).
+  // Autosave the review. The backend keeps it in app storage, which the release validator reads.
   const allClouds = useMemo(() => Object.values(sheets.compared).flat(), [sheets]);
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => gateOf(allClouds, decisions, marks, markDecisions, sheetInfo), [allClouds, decisions, marks, markDecisions, sheets]);
@@ -211,7 +216,8 @@ export default function LightTable() {
           clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1] })),
           sheets: sheetInfo,
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
-          print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename } : null,
+          print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename }
+            : print?.status === 'aside' ? { id: print.att.id, filename: print.att.filename, setAside: true } : null,
           marks: marks.map(({ id, n, zone, x0, y0, x1, y1 }) => ({ id, n, zone, box: [x0, y0, x1, y1] })), markDecisions,
         } });
         if (out?.readOnly) { setSaved('View only: you cannot edit ' + (order?.key || 'this work item')); return; }
@@ -355,7 +361,8 @@ export default function LightTable() {
           sheet={sheet} sheets={sheets} allClouds={allClouds} onSheet={goSheet}
           onSelect={select} onDecide={decide} onSign={signOff}
           print={print} marks={marks} markDecisions={markDecisions} onReadPhoto={readPhoto} onAddPhoto={addPhoto}
-          onDecideMark={decideMark} onRaiseMark={raiseMark} />
+          onDecideMark={decideMark} onRaiseMark={raiseMark}
+          onSetAside={(att) => { if (!readOnly) setPrint({ att, status: 'aside' }); }} />
       </div>
     </Shell>
   );
@@ -470,7 +477,7 @@ function Zoom({ cam }) {
   return <div className="rl-zoom" aria-hidden="true">{Math.round(cam.s * 100)}%</div>;
 }
 
-function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark }) {
+function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside }) {
   const shown = phase === 'ready' ? res.clouds.length : phase === 'clouds' ? res.clouds.length : 0;
   return (
     <aside className={`rl-ledger ${order.canEdit === false ? 'readonly' : ''}`} aria-label="Change ledger">
@@ -511,7 +518,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
         </ul>
       </section>
       <PrintSection order={order} res={res} print={print} marks={marks} markDecisions={markDecisions} sel={sel}
-        onSelect={onSelect} onReadPhoto={onReadPhoto} onAddPhoto={onAddPhoto} onDecideMark={onDecideMark} onRaiseMark={onRaiseMark} />
+        onSelect={onSelect} onReadPhoto={onReadPhoto} onAddPhoto={onAddPhoto} onDecideMark={onDecideMark} onRaiseMark={onRaiseMark} onSetAside={onSetAside} />
       <footer className="rl-foot">
         <p>Compared {res.revA.filename} with {res.revB.filename} in {(res.ms / 1000).toFixed(2)} s: drawn at {res.displayDpi} dpi, compared at {res.dpi} dpi, in your browser. Nothing left Atlassian.</p>
         <p className="keys">Arrows step through changes, 1 to 9 declare against a note, S signs off, F fits the sheet.</p>
@@ -522,14 +529,20 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
 
 // Photos of printed sheets marked up in pen on the shop floor. A photo attached from the Jira mobile app
 // is read automatically; one can also be taken or chosen here.
-function PrintSection({ order, res, print, marks, markDecisions, sel, onSelect, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark }) {
+function PrintSection({ order, res, print, marks, markDecisions, sel, onSelect, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside }) {
   const images = order.images || [];
   const fileRef = useRef(null);
   return (
     <section className="rl-prints">
       <h2>Marked-up prints <span>{images.length || ''}</span></h2>
       {print?.status === 'reading' && <p className="rl-reading">Lining the photo up with {revName(res.revB)}…</p>}
-      {print?.status === 'error' && <p className="rl-print-err">{print.error}</p>}
+      {print?.status === 'error' && (
+        <>
+          <p className="rl-print-err">{print.error}</p>
+          {print.att && <button className="rl-btn rl-print-add" onClick={() => onSetAside(print.att)}>This photo is not a print of the drawing</button>}
+        </>
+      )}
+      {print?.status === 'aside' && <p className="rl-print-meta">{print.att.filename} was set aside: not a print of this drawing.</p>}
       {print?.status === 'done' && (
         <p className="rl-print-meta">{print.att.filename}: {marks.length ? `${marks.length} pen ${marks.length === 1 ? 'markup' : 'markups'} found` : 'no pen markups found'}, lined up with {revName(res.revB)} in {(print.result.ms / 1000).toFixed(1)} s.</p>
       )}
@@ -621,7 +634,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
       <li className={`rl-row signed compact ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
         <button className="rl-row-main" onClick={() => onSelect(c)}>
           <span className="delta">{c.n}</span>
-          <span className="what"><b>Zone {c.zone}</b>{d.status === 'declared' ? `Note ${d.note}` : 'Accepted'}, signed by {d.signedBy}</span>
+          <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{d.status === 'declared' ? `Note ${d.note}` : 'Accepted'}, signed by {d.signedBy}</span>
         </button>
       </li>
     );
@@ -630,7 +643,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
     <li className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
       <button className="rl-row-main" onClick={() => onSelect(c)}>
         <span className="delta">{c.n}</span>
-        <span className="what"><b>Zone {c.zone}</b>{KIND_TEXT[c.kind]}</span>
+        <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{KIND_TEXT[c.kind]}</span>
         <Crop res={res} c={c} />
       </button>
       <div className="rl-row-act">

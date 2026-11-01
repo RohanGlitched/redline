@@ -8,7 +8,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 // maxPixels, because browsers refuse canvases much past 16 million pixels.
 export async function renderPage(bytes, pageNo = 1, dpi = 150, maxPixels = 16e6) {
   const doc = await pdfjs.getDocument({ data: bytes, isEvalSupported: false }).promise;
-  const page = await doc.getPage(Math.min(pageNo, doc.numPages));
+  if (pageNo > doc.numPages) return { missing: true, pages: doc.numPages };
+  const page = await doc.getPage(pageNo);
   const unit = page.getViewport({ scale: 1 });
   const scale = Math.min(dpi / 72, Math.sqrt(maxPixels / (unit.width * unit.height)));
   const vp = page.getViewport({ scale });

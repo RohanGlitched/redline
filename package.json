@@ -1,5 +1,5 @@
 {
-  "name": "jira-issue-panel-custom-ui",
+  "name": "redline",
   "version": "1.2.46-next.8",
   "main": "index.js",
   "license": "MIT",
@@ -12,5 +12,8 @@
     "@forge/api": "^8.4.0",
     "@forge/kvs": "^2.1.1",
     "@forge/resolver": "^2.0.2"
+  },
+  "scripts": {
+    "test": "node --test test/gate.test.mjs"
   }
 }

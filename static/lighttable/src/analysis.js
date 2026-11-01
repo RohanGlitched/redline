@@ -17,7 +17,14 @@ export function zoneOf(c, w, h) {
 }
 
 // Fetch an attachment's bytes in slices (Forge caps one response at 5 MB).
-export async function fetchBytes(invoke, id) {
+// Each attachment is downloaded once per light table session; every sheet and both passes reuse it.
+const files = new Map();
+export function fetchBytes(invoke, id) {
+  if (!files.has(id)) files.set(id, download(invoke, id).catch((e) => { files.delete(id); throw e; }));
+  return files.get(id);
+}
+
+async function download(invoke, id) {
   let first = await invoke('getAttachment', { id, offset: 0 });
   const out = new Uint8Array(first.size);
   let off = 0, part = first;
@@ -29,8 +36,21 @@ export async function fetchBytes(invoke, id) {
   return out;
 }
 
-export async function loadRevision(invoke, att, dpi, page = 1) {
-  return renderPage(await fetchBytes(invoke, att.id), page, dpi);
+export async function loadRevision(invoke, att, dpi, page = 1, maxPixels) {
+  // pdf.js takes ownership of the buffer it is given, so it gets a copy and the cached file stays usable
+  return renderPage((await fetchBytes(invoke, att.id)).slice(), page, dpi, maxPixels);
+}
+
+// A sheet only one revision has: the whole sheet is one change, which has to be declared like any other.
+function wholeSheet(present, side, k) {
+  const img = downsample(present, k);
+  let x0 = img.w, y0 = img.h, x1 = 0, y1 = 0;
+  for (let y = 0; y < img.h; y += 2) for (let x = 0; x < img.w; x += 2) {
+    if (img.data[y * img.w + x] < 140) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 <= x0) { x0 = 0; y0 = 0; x1 = img.w - 1; y1 = img.h - 1; }
+  const blank = { w: present.w, h: present.h, data: new Uint8Array(present.w * present.h).fill(255) };
+  return { img, blank, cloud: { x0, y0, x1, y1, kind: side === 'A' ? 'sheetRemoved' : 'sheetAdded' } };
 }
 
 // The overlay a checker reads on a light table: shared line work in graphite, lines only on rev A in red
@@ -113,7 +133,21 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
   // Render once at display resolution (300 dpi, or 150 dpi for very large sheets) so zooming in stays
   // crisp, and give the engine a 150 dpi copy.
   onStage('Reading both revisions');
-  const [hA, hB] = await Promise.all([loadRevision(invoke, revA, 300, page), loadRevision(invoke, revB, 300, page)]);
+  // fetch both files together, then draw revision B at the dpi revision A got, so a change of sheet size
+  // between revisions cannot turn into a change of scale
+  await Promise.all([fetchBytes(invoke, revA.id), fetchBytes(invoke, revB.id)]);
+  let hA = await loadRevision(invoke, revA, 300, page);
+  let hB = await loadRevision(invoke, revB, hA.missing ? 300 : hA.dpi, page, 24e6);
+  if (hA.missing || hB.missing) {
+    if (hA.missing && hB.missing) throw new Error(`Neither revision has a sheet ${page}`);
+    const present = hA.missing ? hB : hA;
+    const k = Math.max(1, Math.round(present.dpi / 150));
+    const w = wholeSheet(present, hA.missing ? 'B' : 'A', k);
+    const A = hA.missing ? downsample(w.blank, k) : w.img, B = hA.missing ? w.img : downsample(w.blank, k);
+    const hiA = hA.missing ? w.blank : present, hiBw = hA.missing ? present : w.blank;
+    const clouds = [{ id: 'c1', n: 1, ...w.cloud, zone: zoneOf(w.cloud, A.w, A.h) }];
+    return { A, B, Bw: B, hiA, hiBw, k, bCanvas: hB.canvas || present.canvas, clouds: linkNotes(clouds, notes, page || 1), transform: [1, 0, 0, 0, 1, 0], ms: 0, dpi: Math.round(present.dpi / k), displayDpi: Math.round(present.dpi), pages: [hA.pages, hB.pages] };
+  }
   // the engine works near 150 dpi; small sheets are drawn at 300 dpi and halved, large ones used as drawn
   const k = Math.max(1, Math.round(hA.dpi / 150));
   const [A, B] = [downsample(hA, k), downsample(hB, k)];
@@ -185,12 +219,19 @@ export function readPrint(photo, res) {
 // Shrink a phone photo for upload (Forge payloads stay under ~3.5 MB once base64 encoded).
 export async function photoForUpload(file) {
   const bmp = await createImageBitmap(file);
-  const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
-  const c = rgbaOf(bmp, Math.round(bmp.width * k), Math.round(bmp.height * k)).canvas;
-  const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
-  const buf = new Uint8Array(await blob.arrayBuffer());
-  let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-  return { name: (file.name || 'print-photo').replace(/\.[^.]+$/, '') + '.jpg', data: btoa(s) };
+  // Forge lets the browser send its backend about 500 KB per call, so the photo is re-encoded, smaller
+  // and softer step by step, until it fits with room to spare. Pen marks read well down to ~1600 px.
+  let data = '';
+  for (const [side, q] of [[2400, 0.86], [2400, 0.76], [2000, 0.76], [1800, 0.7], [1600, 0.66], [1400, 0.6]]) {
+    const k = Math.min(1, side / Math.max(bmp.width, bmp.height));
+    const c = rgbaOf(bmp, Math.round(bmp.width * k), Math.round(bmp.height * k)).canvas;
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', q));
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    data = btoa(s);
+    if (data.length < 360000) break;
+  }
+  return { name: (file.name || 'print-photo').replace(/\.[^.]+$/, '') + '.jpg', data };
 }
 
 // CSS matrix3d that maps an element's own pixels (src quad) onto screen points (dst quad).
