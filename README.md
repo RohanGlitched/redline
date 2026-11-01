@@ -45,9 +45,9 @@ A note claims a change outright only when that change is the only one in the zon
 
 The engine is plain JavaScript with no dependencies: [`static/lighttable/src/engine/`](static/lighttable/src/engine/).
 
-## Measured, not claimed
+## Measured on a benchmark
 
-On 352 revision pairs built from public-domain NIST test drawings, with edits planted at the PDF level:
+On 352 revision pairs we built from public-domain NIST test drawings, with edits we planted at the PDF level (so these numbers show how the engine behaves, not how often real drafters slip):
 
 | | Result |
 |---|---|
