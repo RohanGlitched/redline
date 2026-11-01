@@ -148,3 +148,24 @@ test('a move is housekeeping only when the changed ink is text', () => {
   assert.equal(withHousekeeping({ ...label, textShare: 0.4 }).housekeeping, undefined); // a hole moved with its callout
   assert.equal(withHousekeeping({ before: 'Date: 2024-01-12', after: 'Date: 2025-01-12', textShare: 0.5 }).housekeeping, undefined);
 });
+
+// ---------- saving a review: re-reads and repeats ----------
+import { ENGINE_VERSION, matchChanges, sameReview } from '../shared/review.mjs';
+
+test('after a re-read, each earlier change is matched once, to the new change in the same place', () => {
+  const old = [{ id: 's1-c1', sheet: 1, box: [0, 0, 10, 10] }, { id: 's1-c2', sheet: 1, box: [100, 100, 120, 120] }, { id: 's2-c1', sheet: 2, box: [0, 0, 10, 10] }];
+  const now = [{ id: 's1-c1', sheet: 1, box: [101, 101, 119, 119] }, { id: 's1-c2', sheet: 1, box: [1, 1, 9, 9] }, { id: 's1-c3', sheet: 1, box: [2, 2, 8, 8] }, { id: 's1-c4', sheet: 1, box: [500, 500, 510, 510] }];
+  const m = matchChanges(old, now);
+  assert.equal(m['s1-c1'], 's1-c2'); // renumbered: follows its place, not its number
+  assert.equal(Object.values(m).filter((o) => o === 's1-c1').length, 1); // never handed to two changes
+  assert.equal(m['s1-c4'], undefined); // a new change starts open
+  assert.ok(!Object.values(m).includes('s2-c1')); // other sheets are never matched
+  assert.equal(ENGINE_VERSION, 'redline-core 0.4');
+});
+
+test('a save that changes nothing is recognised; any decision or finding change is not', () => {
+  const base = { revA: { id: 1 }, revB: { id: 2 }, engine: ENGINE_VERSION, clouds: [{ id: 's1-c1' }], decisions: { 's1-c1': { status: 'declared', note: 1, signedAt: 't1', signedBy: 'A' } } };
+  assert.equal(sameReview(base, { ...base, analysedAt: 'later', decisions: { 's1-c1': { status: 'declared', note: 1, signedAt: 't2' } } }), true);
+  assert.equal(sameReview(base, { ...base, decisions: { 's1-c1': { status: 'declared', note: 2, signedAt: 't1' } } }), false);
+  assert.equal(sameReview(base, { ...base, clouds: [] }), false);
+});

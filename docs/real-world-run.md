@@ -1,6 +1,6 @@
 # Redline on real drawings
 
-Everything in [the benchmark](../bench/README.md) is built by us: we planted the edits, so we know where they are. This run uses drawings nobody prepared for Redline: the published schematics of five SparkFun open-hardware boards, every version kept in their GitHub history. The commit message on each new version plays the part of the change notes, written by the engineers who made the change.
+Everything in [the benchmark](../bench/README.md) is built by us: we planted the edits, so we know where they are. This run uses drawings nobody prepared for Redline: 7 published drawings from 5 SparkFun open-hardware repositories, every version kept in their GitHub history. The commit message on each new version plays the part of the change notes, written by the engineers who made the change.
 
 ![A jumper added in series with the log button, under a commit message about mounting holes](real-world/gnssdo-jumper-added.png)
 
@@ -12,9 +12,9 @@ Everything in [the benchmark](../bench/README.md) is built by us: we planted the
 
 ## What it found
 
-Redline drew **363 clouds** over the 27 pairs. Three pairs produced none, and in all three the commit message describes a change that is not on the schematic (a 3D model, PCB silk, a file rename).
+Redline drew **365 clouds** over the 27 pairs (118 sheet pairs). Three pairs produced none, and in all three the commit message describes a change that is not on the schematic (a 3D model, PCB silk, a file rename).
 
-To check what the clouds mean, we inspected every cloud in 9 pairs (60 clouds) at full zoom, before and after side by side:
+To check what the clouds mean, we inspected every cloud in 9 pairs (60 clouds, counted before the re-plot shift check, which now sets 5 of them aside) at full zoom, before and after side by side:
 
 | What the cloud marks | Clouds |
 |---|---|
@@ -38,8 +38,8 @@ This is not a criticism of SparkFun's engineers: these are working commits in an
 
 Our own benchmark never re-exports a PDF; real projects do every time. Two changes to the engine came straight from this run:
 
-1. **Re-plot shifts.** A re-exported PDF can nudge line work by a pixel or two. Redline now matches each cloud's before and after patches within about 0.7 mm, and every separate piece of ink inside the cloud on its own too, so one changed digit inside a nudged block keeps the cloud. Clouds that pass are set aside, not deleted: the app lists them under "Set aside", draws them on the sheet on request, and a reviewer can count any one back in as a change. On this run 32 of 395 clouds were set aside, including all 5 with no real difference in the inspected sample and one label nudged by less than 0.7 mm. We looked at all 32 side by side ([`real-world/set-aside-all.png`](real-world/set-aside-all.png), made by `bench/real/aside_sheet.py`): every one reads the same before and after. On the planted benchmark the check cut false clouds from 0.11 to 0.01 per sheet and still found 431 of 432 edits.
-2. **Moves and housekeeping.** Redline now measures moves: when the ink that disappeared reappears nearby with the same shape, the change says so, with the distance (the sample bracket's hole reads "Moved 3 mm right and down", exactly as planted; on this run, 72 of the 363 clouds measured as moves). Two kinds of difference are grouped as housekeeping: plot stamps (both texts nothing but dates, times, file paths and tool versions) and labels that moved without changing. Both need at least 90% of the changed ink to be text, so a hole that moved with its callout stays in the main list with its distance. A reviewer opens the group, looks it over, and signs the open ones together; nothing already sent back or declared is touched.
+1. **Re-plot shifts.** A re-exported PDF can nudge line work by a pixel or two. Redline now matches each cloud's before and after patches within about 0.7 mm, and every separate piece of ink inside the cloud on its own too, so one changed digit inside a nudged block keeps the cloud. Clouds that pass are set aside, not deleted: the app lists them under "Set aside", draws them on the sheet on request, and a reviewer can count any one back in as a change. On this run 30 of 395 clouds were set aside. We looked at all 30 side by side ([`real-world/set-aside-all.png`](real-world/set-aside-all.png), made by `bench/real/aside_sheet.py`): every one reads the same before and after. The check is deliberately cautious: small dots of ink (a decimal point, a minus sign) are always checked on their own, so two clouds where a wire was redrawn in place stay as changes rather than risk setting aside a real edit. On the planted benchmark the check cut false clouds from 0.11 to 0.01 per sheet and still found 431 of 432 edits.
+2. **Moves and housekeeping.** Redline now measures moves: when the ink that disappeared reappears nearby with the same shape, the change says so, with the distance (the sample bracket's hole reads "Moved 3 mm right and down", exactly as planted; on this run, 72 of the 365 clouds measured as moves). Two kinds of difference are grouped as housekeeping: plot stamps (both texts nothing but dates, times, file paths and tool versions) and labels that moved without changing. Both need at least 90% of the changed ink to be text, so a hole that moved with its callout stays in the main list with its distance. A reviewer opens the group, looks it over, and signs the open ones together; nothing already sent back or declared is touched.
 
 ## Limits
 

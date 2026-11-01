@@ -3,6 +3,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { gateOf, verdictOf, valueSlip } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
+import { ENGINE_VERSION, matchChanges, sameReview } from '../shared/review.mjs';
 
 export { verdictOf, notesFromAdf };
 
@@ -19,7 +20,12 @@ const auditKey = (issueId) => `audit:${issueId}`;
 
 async function jira(path, init) {
   const res = await api.asUser().requestJira(path, init);
-  if (!res.ok && res.status !== 404) throw new Error(`Jira answered ${res.status} for ${init?.method || 'GET'} request`);
+  if (!res.ok && res.status !== 404) {
+    // Jira's own reason (a required field, a missing permission) is the useful part of the message
+    let why = '';
+    try { const b = await res.json(); why = [...(b.errorMessages || []), ...Object.values(b.errors || {})].join(' '); } catch { /* not JSON */ }
+    throw new Error(`Jira answered ${res.status}${why ? `: ${why.slice(0, 200)}` : ''}`);
+  }
   return res;
 }
 
@@ -30,11 +36,11 @@ export async function loadChangeOrder(key) {
   const review = (await kvs.get(reviewKey(issue.id))) || null;
   const attachments = (issue.fields.attachment || [])
     .filter((a) => a.mimeType === 'application/pdf')
-    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id)
+    .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id)
     .map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, author: a.author?.displayName }));
   const images = (issue.fields.attachment || [])
     .filter((a) => /^image\/(jpeg|png|webp)$/.test(a.mimeType))
-    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id)
+    .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id)
     .map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, mimeType: a.mimeType, author: a.author?.displayName }));
   return {
     key: issue.key,
@@ -98,6 +104,11 @@ resolver.define('getAttachment', async (req) => {
   let buf;
   if (lastFile && lastFile.id === id && lastFile.account === account && Date.now() - lastFile.at < 60000) buf = lastFile.buf;
   else {
+    // the size first, so a huge attachment is refused before it is downloaded
+    const meta = await jira(route`/rest/api/3/attachment/${id}`);
+    if (meta.status === 404) throw new Error('This attachment was removed or you cannot see it');
+    const size = (await meta.json()).size || 0;
+    if (size > MAX) throw new Error(`This file is ${(size / 1e6).toFixed(0)} MB; Redline reads drawings up to 40 MB`);
     const res = await jira(route`/rest/api/3/attachment/content/${id}`);
     buf = Buffer.from(await res.arrayBuffer());
     lastFile = { id, account, buf, at: Date.now() };
@@ -120,7 +131,9 @@ async function canEdit(key) {
 resolver.define('saveReview', async (req) => {
   const key = issueKey(req);
   if (!(await canEdit(key))) return { readOnly: true };
-  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=summary,description,attachment`)).json();
+  const ires = await jira(route`/rest/api/3/issue/${key}?fields=summary,description,attachment`);
+  if (ires.status === 404) return { stale: true, error: `${key} was not found or you cannot see it any more.` };
+  const issue = await ires.json();
   const notes = notesFromAdf(issue.fields.description);
   const stored = await kvs.get(reviewKey(issue.id));
   const base = req.payload.baseVersion || 0;
@@ -128,13 +141,21 @@ resolver.define('saveReview', async (req) => {
   const r = req.payload.review, now = new Date().toISOString();
   // a review is always of the two newest PDF revisions on the work item, named by id
   const pdfs = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf')
-    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id);
+    .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
   const [newA, newB] = pdfs.slice(-2);
   if (!newA || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'This review is not of the two newest drawing revisions. Reopen the light table to compare them.' };
+  // A re-read is a review from this exact engine version replacing one from an older version: its changes
+  // are found afresh, and each earlier decision belongs to the new change in the same place on the sheet.
+  const sameRevs = stored && +stored.revA?.id === +r.revA.id && +stored.revB?.id === +r.revB.id;
+  const reread = !!(sameRevs && stored.engine && stored.engine !== ENGINE_VERSION && r.engine === ENGINE_VERSION);
+  const carried = reread ? matchChanges(stored.clouds, r.clouds) : {};
+  const beforeOf = (id) => stored?.decisions?.[reread ? carried[id] : id];
+  // nothing changed since the last save (the light table saves once when it opens): no write, no audit entry
+  if (sameRevs && !reread && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: stored.gate, decisions: stored.decisions };
   const me = await (await jira(route`/rest/api/3/myself`)).json();
   const signed = [];
   for (const [id, d] of Object.entries(r.decisions || {})) {
-    const before = stored?.decisions?.[id];
+    const before = beforeOf(id);
     // a signature stands only while the decision it signed (status and note) is unchanged
     const same = before && before.status === d.status && (before.note ?? null) === (d.note ?? null);
     if (d.signedAt && same && before.signedById) { d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy; }
@@ -147,19 +168,18 @@ resolver.define('saveReview', async (req) => {
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
   // an earlier comparison found, and what was found about a change (its box, text and values) stays as
   // first recorded, so a review cannot be emptied or softened after the fact.
-  // A newer engine re-reads the drawings from scratch: its changes replace the old ones (the browser has
-  // already carried each decision over to the change in the same place), and the audit log says so.
-  const ver = (e) => (String(e || '').match(/(\d+)\.(\d+)/) || [0, 0, 0]).slice(1).map(Number);
-  const newer = (a, b) => { const [x, y] = ver(a), [p, q] = ver(b); return x > p || (x === p && y > q); };
-  const reread = !!(stored?.engine && r.engine && newer(r.engine, stored.engine));
-  if (stored && +stored.revA?.id === +r.revA.id && +stored.revB?.id === +r.revB.id && !reread) {
+  // A re-read (above) replaces the old changes with the ones the current engine found, and the audit log says so.
+  if (sameRevs && !reread) {
     const was = new Map((stored.clouds || []).map((c) => [c.id, c]));
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []).map((c) => (was.has(c.id) ? { ...c, ...was.get(c.id) } : c)), ...(stored.clouds || []).filter((c) => !ids.has(c.id))];
     const done = new Set([...(r.sheets?.done || []), ...(stored.sheets?.done || [])]);
     r.sheets = { count: Math.max(r.sheets?.count || 1, stored.sheets?.count || 1), done: [...done].sort((x, y) => x - y) };
-    const mids = new Set((r.marks || []).map((m) => m.id));
-    r.marks = [...(r.marks || []), ...(stored.marks || []).filter((m) => !mids.has(m.id))];
+    // pen markups belong to one photo: a newer photo's markups replace an older photo's, never mix with them
+    if (+stored.print?.id === +r.print?.id) {
+      const mids = new Set((r.marks || []).map((m) => m.id));
+      r.marks = [...(r.marks || []), ...(stored.marks || []).filter((m) => !mids.has(m.id))];
+    }
   }
   const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes);
   // who answered each pen markup, and who set a photo aside, as Jira names them
@@ -172,6 +192,9 @@ resolver.define('saveReview', async (req) => {
   // "held since": when this review's gate last went from clear (or new) to blocked
   const heldSince = gate.blocked ? (stored?.gate?.status === 'blocked' && stored.heldSince ? stored.heldSince : now) : null;
   const review = { ...r, gate, heldSince, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
+  // app storage keeps values up to 240 KiB: drop the set-aside list (it can be found again) before refusing
+  if (JSON.stringify(review).length > 230000) review.setAside = (review.setAside || []).slice(0, 20);
+  if (JSON.stringify(review).length > 230000) return { stale: true, error: 'This review is too large to save. Split the drawing into fewer sheets per change order.' };
   await kvs.set(reviewKey(issue.id), review);
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   const audit = (await kvs.get(auditKey(issue.id))) || [];
@@ -189,7 +212,7 @@ async function attach(key, name, mime, base64) {
   // multipart/form-data built by hand: one part named "file", CRLF line endings as the format requires
   const boundary = '----redline' + Math.random().toString(16).slice(2);
   const CRLF = String.fromCharCode(13, 10);
-  const head = Buffer.from(`--${boundary}${CRLF}Content-Disposition: form-data; name="file"; filename="${name.replace(/"/g, '')}"${CRLF}Content-Type: ${mime}${CRLF}${CRLF}`);
+  const head = Buffer.from(`--${boundary}${CRLF}Content-Disposition: form-data; name="file"; filename="${name.replace(/["\r\n]/g, '')}"${CRLF}Content-Type: ${mime}${CRLF}${CRLF}`);
   const body = Buffer.concat([head, Buffer.from(base64, 'base64'), Buffer.from(`${CRLF}--${boundary}--${CRLF}`)]);
   const res = await jira(route`/rest/api/3/issue/${key}/attachments`, {
     method: 'POST', headers: { 'X-Atlassian-Token': 'no-check', 'Content-Type': `multipart/form-data; boundary=${boundary}` }, body,
@@ -226,8 +249,9 @@ resolver.define('raiseMarkup', async (req) => {
 // NIST drawing revisions and two numbered change notes) to the work item they are looking at.
 resolver.define('addSample', async (req) => {
   const key = issueKey(req);
-  for (const f of req.payload.files) await attach(key, f.name, f.mime || 'application/pdf', f.data);
-  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=description`)).json();
+  // the notes go in first and files already attached are skipped, so trying again never duplicates anything
+  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=description,attachment`)).json();
+  const have = new Set((issue.fields.attachment || []).map((a) => a.filename));
   if (!notesFromAdf(issue.fields.description).length) {
     const doc = issue.fields.description || { type: 'doc', version: 1, content: [] };
     const item = (t) => ({ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: t }] }] });
@@ -235,6 +259,7 @@ resolver.define('addSample', async (req) => {
       { type: 'orderedList', attrs: { order: 1 }, content: req.payload.notes.map(item) });
     await jira(route`/rest/api/3/issue/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { description: doc } }) });
   }
+  for (const f of req.payload.files) if (!have.has(f.name)) await attach(key, f.name, f.mime || 'application/pdf', f.data);
   return { ok: true };
 });
 
@@ -349,6 +374,15 @@ export async function findBlockedChangeOrders(payload) {
 
 // When a drawing, a photo or the change notes change on a reviewed work item, refresh the searchable copy
 // of the verdict, so JQL never shows "clear" for a change order the validator would refuse.
+// When a work item is deleted, Redline's own records about it (review, audit log, sheet thumbnails) go too.
+export async function onIssueDeleted(event) {
+  const id = event.issue?.id;
+  if (!id) return;
+  await kvs.delete(reviewKey(id)).catch(() => {});
+  await kvs.delete(auditKey(id)).catch(() => {});
+  for (let n = 1; n <= 50; n++) await kvs.delete(thumbKey(id, n)).catch(() => {});
+}
+
 export async function onIssueUpdated(event) {
   const fields = (event.changelog?.items || []).map((i) => String(i.field || '').toLowerCase());
   if (!fields.some((f) => f === 'attachment' || f === 'description')) return;

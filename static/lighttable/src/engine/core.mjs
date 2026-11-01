@@ -267,8 +267,8 @@ export function diff(A, Bw, opts = {}) {
       const sTau = opts.shiftTau ?? 0.985, sPx = opts.shiftPx ?? 4;
       c.shiftNcc = bestNcc(ra, rb, w, h, c, sPx, 4);
       if (c.shiftNcc >= sTau) {
-        // (slivers under 4 px across are line work redrawn in place: too thin to be a character)
-        const inside = kept.filter((b) => b.x0 >= c.x0 && b.x1 <= c.x1 && b.y0 >= c.y0 && b.y1 <= c.y1 && b.x1 - b.x0 >= 3 && b.y1 - b.y0 >= 3);
+        // (long slivers under 3 px across are line work redrawn in place; small dots such as a decimal point still count)
+        const inside = kept.filter((b) => b.x0 >= c.x0 && b.x1 <= c.x1 && b.y0 >= c.y0 && b.y1 <= c.y1 && !(Math.min(b.x1 - b.x0, b.y1 - b.y0) < 3 && Math.max(b.x1 - b.x0, b.y1 - b.y0) > 8));
         const worst = Math.min(1, ...inside.map((b) => bestNcc(ra, rb, w, h, b, sPx, 2)));
         if (worst >= sTau) { c.shiftNccWorst = worst; rejected.push(c); continue; }
         c.shiftNcc = worst;
@@ -374,6 +374,9 @@ export function compare(A, B, opts = {}) {
   const p = register(inkMask(A), inkMask(B), opts);
   const t1 = Date.now();
   const Bw = warpGray(B, p, A.w, A.h);
-  const r = diff(A, Bw, opts);
+  // a scanned or photocopied revision gets a wider line tolerance (3 px instead of 2): its lines are
+  // thicker and fuzzier than the PDF's
+  const scanned = Math.max(noiseLevel(A), noiseLevel(Bw)) > (opts.noisy ?? 0.4);
+  const r = diff(A, Bw, { tol: scanned ? 3 : 2, ...opts });
   return { ...r, transform: p, ms: { register: t1 - t0, diff: Date.now() - t1 } };
 }

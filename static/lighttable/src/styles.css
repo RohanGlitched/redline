@@ -101,7 +101,7 @@ button { font: inherit; color: inherit; }
 @keyframes rl-draw { to { stroke-dashoffset: 0; } }
 .rl-cloud .tag { opacity: 0; }
 .rl-cloud .tag > * { transform-box: fill-box; transform-origin: center; }
-.rl-cloud .tag path { fill: var(--rl-surface, #fff); stroke: var(--rl-red); stroke-width: 2px; vector-effect: non-scaling-stroke; }
+.rl-cloud .tag path { fill: #fff; /* the sheet is always white paper, in both themes */ stroke: var(--rl-red); stroke-width: 2px; vector-effect: non-scaling-stroke; }
 .rl-cloud .tag text { font: 700 15px var(--rl-letter); fill: var(--rl-red); }
 .rl-stage.phase-clouds .rl-cloud .tag { animation: rl-tag 0.35s ease-out forwards; animation-delay: calc(var(--delay) + 0.55s); }
 .rl-stage.phase-ready .rl-cloud .tag { opacity: 1; }

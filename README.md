@@ -47,7 +47,7 @@ The engine is plain JavaScript with no dependencies: [`static/lighttable/src/eng
 
 ## On real drawings
 
-We ran Redline on drawings nobody prepared for it: 27 consecutive revisions of five SparkFun open-hardware boards, taken from their GitHub history, with each commit message standing in for the change notes. In the 9 pairs we inspected cloud by cloud, Redline marked 25 content changes (a jumper, a test point, a pin, renamed nets, swapped connectors). **The commit messages describe 3 of them.** The run also taught the engine to set aside re-plot shifts (all 32 it set aside are published side by side, and each reads the same before and after) and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
+We ran Redline on drawings nobody prepared for it: 27 consecutive revision pairs of 7 drawings from 5 SparkFun open-hardware repositories, taken from their GitHub history, with each commit message standing in for the change notes. In the 9 pairs we inspected cloud by cloud, Redline marked 25 content changes (a jumper, a test point, a pin, renamed nets, swapped connectors). **The commit messages describe 3 of them.** The run also taught the engine to set aside re-plot shifts (all 30 it set aside are published side by side, and each reads the same before and after) and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
 
 ## Measured on a benchmark
 

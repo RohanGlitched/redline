@@ -2,6 +2,7 @@
 // tied to a change-note line or held as undeclared, and the release gate that follows from it.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, closeModal, getFocus } from './bridge.js';
+import { matchChanges, overlap } from '../../../shared/review.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
 import { gateOf, valueSlip } from '../../../shared/gate.mjs';
@@ -51,6 +52,8 @@ export default function LightTable() {
   const [turning, setTurning] = useState(null); // sheet being compared while the current one stays on the table
   const analysed = useRef({});
   const [aside, setAside] = useState({}); // { [sheet]: differences set aside as re-plot shifts }
+  const loadedSheets = useRef(new Set()); // sheets whose saved decisions were carried over this session
+  const sheetRef = useRef(1);
   const [showAside, setShowAside] = useState(false);
   const loadSheet = useCallback(async (o, n, revA, revB, keep = false) => {
     if (keep) setTurning(n); else setRes(null);
@@ -62,13 +65,28 @@ export default function LightTable() {
     // compared, but is only shown over sheet 1
     if (n !== 1) setMode((m) => (m === 'print' ? 'overlay' : m));
     // cloud ids carry the sheet so decisions on different sheets never collide
-    const clouds = r.clouds.map((c) => ({ ...c, id: `s${n}-${c.id}`, sheet: n }));
+    const found = r.clouds.map((c) => ({ ...c, id: `s${n}-${c.id}`, sheet: n }));
+    // differences a reviewer counted back in stay changes when the light table is opened again
+    const sameRevB = o.review && o.review.revB?.id === revB.id;
+    const back = sameRevB ? (o.review.clouds || []).filter((c) => c.countedBack && (c.sheet || 1) === n)
+      .map((c) => ({ ...c, x0: c.box[0], y0: c.box[1], x1: c.box[2], y1: c.box[3] })) : [];
+    const clouds = [...found, ...back.filter((b) => !found.some((c) => c.id === b.id))];
     // decisions saved earlier follow their change by where it is on the sheet, not by its number, so a
     // newer engine that finds the changes in another order (or drops one) never moves a signature
-    const prior = o.review && o.review.revB?.id === revB.id ? priorDecisions(o.review, clouds, n) : {};
-    setAside((x) => ({ ...x, [n]: (r.setAside || []).map((a) => ({ ...a, id: `s${n}-${a.id}`, sheet: n })) }));
+    const prior = o.review && o.review.revB?.id === revB.id ? priorDecisions(o.review, clouds, n) : { others: {}, mine: {} };
+    setAside((x) => ({ ...x, [n]: (r.setAside || []).map((a) => ({ ...a, id: `s${n}-${a.id}`, sheet: n }))
+      .filter((a) => !back.some((b) => overlap([a.x0, a.y0, a.x1, a.y1], b.box) >= 0.5)) }));
+    sheetRef.current = n;
+    const first = !loadedSheets.current.has(n), firstEver = !loadedSheets.current.size;
+    loadedSheets.current.add(n);
     setDecisions((d) => {
-      const next = { ...prior, ...d };
+      // the first time a sheet is compared this session, its saved decisions are carried over by position;
+      // after that, what the reviewer decided stands
+      let next = { ...d };
+      if (first) {
+        next = Object.fromEntries(Object.entries(d).filter(([id]) => !id.startsWith(`s${n}-`)));
+        Object.assign(next, firstEver ? prior.others : {}, prior.mine);
+      }
       for (const c of clouds) next[c.id] = next[c.id] || (c.note ? { status: 'declared', note: c.note } : { status: 'open' });
       return next;
     });
@@ -132,7 +150,7 @@ export default function LightTable() {
     if (reduceMotion) { setPhase('ready'); return; }
     setPhase('sweep');
     const t1 = setTimeout(() => setPhase('clouds'), 1250);
-    const t2 = setTimeout(() => setPhase('ready'), 1250 + 260 * res.clouds.length + 600);
+    const t2 = setTimeout(() => setPhase('ready'), 1250 + stagger(res.clouds.length) * res.clouds.length + 600);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [res]);
 
@@ -150,6 +168,8 @@ export default function LightTable() {
       const photo = await loadPhoto(invoke, att);
       const result = readPrint(photo, res);
       if (result.error) { setPrint({ att, status: 'error', error: result.error }); return; }
+      // markups belong to this photo: a new photo's P1 never inherits the answer given to an old one's
+      result.marks = result.marks.map((k) => ({ ...k, id: `p${att.id}-${k.id}` }));
       const url = photo.canvas.toDataURL('image/jpeg', 0.85);
       const r = stageRef.current.getBoundingClientRect(), c = camRef.current;
       const fitK = Math.min((r.width * 0.86) / photo.w, (r.height * 0.86) / photo.h);
@@ -157,7 +177,7 @@ export default function LightTable() {
       const from = result.corners.map(([x, y]) => [ox + x * fitK, oy + y * fitK]);
       const to = [[c.x, c.y], [c.x + res.A.w * c.s, c.y], [c.x + res.A.w * c.s, c.y + res.A.h * c.s], [c.x, c.y + res.A.h * c.s]];
       setMarkDecisions((m) => Object.fromEntries(result.marks.map((k) => [k.id, m[k.id] || { status: 'open' }])));
-      if (reduceMotion) { setPrint({ att, status: 'done', result }); setMode('print'); return; }
+      if (reduceMotion) { setPrint({ att, status: 'done', result }); setMode((m) => (sheetRef.current === 1 ? 'print' : m)); return; }
       // hold the photo as taken for a beat, then let it settle onto the sheet
       setFlatten({ url, src: result.corners, from, to, t: 0, w: photo.w, h: photo.h });
       await new Promise((ok) => setTimeout(ok, 700));
@@ -170,7 +190,7 @@ export default function LightTable() {
         };
         requestAnimationFrame(step);
       });
-      setPrint({ att, status: 'done', result }); setMode('print');
+      setPrint({ att, status: 'done', result }); setMode((m) => (sheetRef.current === 1 ? 'print' : m));
       setTimeout(() => setFlatten(null), 450);
     } catch (e) { setPrint({ att, status: 'error', error: e.message || String(e) }); }
   }, [res]);
@@ -214,11 +234,17 @@ export default function LightTable() {
   const allClouds = useMemo(() => Object.values(sheets.compared).flat(), [sheets]);
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => gateOf(allClouds, decisions, marks, markDecisions, sheetInfo, order?.notes), [allClouds, decisions, marks, markDecisions, sheets, order]);
+  // Saves go one at a time: a decision made while a save is on its way waits for it, then saves with
+  // the new version, so two quick decisions never look like someone else saving in between.
+  const saving = useRef(false), pending = useRef(false);
+  const [saveTick, setSaveTick] = useState(0);
   useEffect(() => {
     // a comparison that found nothing is a review too: it is saved so the release can go ahead
     if (!res) return;
     if (readOnly) { setSaved('View only'); return; }
+    if (saving.current) { pending.current = true; return; }
     const t = setTimeout(async () => {
+      saving.current = true;
       setSaved('Saving');
       try {
         const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
@@ -243,19 +269,29 @@ export default function LightTable() {
         if (out?.stale) { setSaved(out.error); return; }
         versionRef.current = out?.version ?? versionRef.current;
         // take back what the server stamped (who signed, when), without disturbing decisions made since
+        // (only when something actually changed: a new object here would trigger another save, forever)
         if (out?.decisions) setDecisions((cur) => {
+          let changed = false;
           const next = { ...cur };
           for (const [id, d] of Object.entries(out.decisions)) {
             const c = cur[id];
-            if (c && c.status === d.status && (c.note ?? null) === (d.note ?? null) && !!c.signedAt === !!d.signedAt) next[id] = { ...c, signedAt: d.signedAt, signedBy: d.signedBy, valueOk: d.valueOk ?? c.valueOk };
+            if (!(c && c.status === d.status && (c.note ?? null) === (d.note ?? null) && !!c.signedAt === !!d.signedAt)) continue;
+            const valueOk = d.valueOk ?? c.valueOk;
+            if (c.signedAt === d.signedAt && c.signedBy === d.signedBy && JSON.stringify(c.valueOk ?? null) === JSON.stringify(valueOk ?? null)) continue;
+            next[id] = { ...c, signedAt: d.signedAt, signedBy: d.signedBy, valueOk };
+            changed = true;
           }
-          return next;
+          return changed ? next : cur;
         });
-        setSaved('Saved to ' + (order?.key || 'the work item'));
+        setSaved(`Saved to ${order?.key || 'the work item'} at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
       } catch (e) { setSaved('Not saved: ' + e.message); }
+      finally {
+        saving.current = false;
+        if (pending.current) { pending.current = false; setSaveTick((x) => x + 1); }
+      }
     }, 500);
     return () => clearTimeout(t);
-  }, [decisions, res, markDecisions, print, sheets]);
+  }, [decisions, res, markDecisions, print, sheets, aside, saveTick]);
 
   const flyTo = useCallback((c) => {
     if (!stageRef.current || !c) return;
@@ -297,16 +333,20 @@ export default function LightTable() {
   // Keyboard: arrows walk the clouds, digits declare against a note line, S signs off, F fits the sheet.
   useEffect(() => {
     const onKey = (e) => {
-      if (!res || e.target.closest?.('select, textarea, input')) return;
+      // shortcuts never fire with a modifier (Ctrl+S stays the browser's) or inside a form control
+      if (!res || e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('select, textarea, input')) return;
       const list = res.clouds, i = list.findIndex((c) => c.id === sel);
-      if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j') { select(list[(i + 1) % list.length]); e.preventDefault(); }
-      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k') { select(list[(i - 1 + list.length) % list.length]); e.preventDefault(); }
-      if (sel && /^[1-9]$/.test(e.key) && order.notes.some((n) => n.n === +e.key)) decide(sel, { status: 'declared', note: +e.key });
-      if (sel && e.key.toLowerCase() === 's') {
-        const c = allClouds.find((x) => x.id === sel), d = decisions[sel] || {};
+      if (list.length && (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j')) { select(list[(i + 1) % list.length]); e.preventDefault(); }
+      if (list.length && (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k')) { select(list[i < 0 ? list.length - 1 : (i - 1 + list.length) % list.length]); e.preventDefault(); }
+      if (e.key.toLowerCase() === 'f') fit();
+      // digits and S act on a change (never on a pen markup); declaring against another note clears a signature
+      const c = sel && allClouds.find((x) => x.id === sel);
+      if (!c) return;
+      const d = decisions[sel] || {};
+      if (/^[1-9]$/.test(e.key) && order.notes.some((n) => n.n === +e.key) && !(d.status === 'declared' && d.note === +e.key)) decide(sel, { status: 'declared', note: +e.key, signedBy: null, signedAt: null, valueOk: null });
+      if (e.key.toLowerCase() === 's' && (d.status === 'declared' || d.status === 'accepted') && !d.signedBy) {
         if (!(d.status === 'declared' && !d.valueOk && valueSlip(c, order.notes.find((n) => n.n === d.note)?.text).length)) signOff(sel);
       }
-      if (e.key.toLowerCase() === 'f') fit();
     };
     addEventListener('keydown', onKey); return () => removeEventListener('keydown', onKey);
   });
@@ -373,7 +413,7 @@ export default function LightTable() {
                   const d = decisions[c.id] || {}, state = cloudState(d);
                   return (
                     <g key={c.id} className={`rl-cloud ${state} ${sel === c.id ? 'sel' : ''}`}
-                      style={{ '--delay': `${i * 260}ms` }} onClick={(e) => { e.stopPropagation(); select(c); }}>
+                      style={{ '--delay': `${i * stagger(res.clouds.length)}ms` }} onClick={(e) => { e.stopPropagation(); select(c); }}>
                       {d.signedBy && <rect className="hl" x={c.x0 - 8} y={c.y0 - 8} width={c.x1 - c.x0 + 16} height={c.y1 - c.y0 + 16} rx="6" />}
                       <path d={cloudPath(c.x0, c.y0, c.x1, c.y1, Math.max(8, 9 / cam.s), Math.max(7, Math.min(40, 8 / cam.s)))} pathLength="1" />
                       <g className="tag" transform={`translate(${c.x1 + 9 / cam.s},${c.y0 - 9 / cam.s}) scale(${Math.min(2.5, 1 / cam.s)})`}>
@@ -711,24 +751,19 @@ function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect, readOnl
   );
 }
 
-// Earlier decisions for this sheet, matched to today's changes by overlap (at least half of the smaller
-// box). Decisions on other sheets are kept as they are; ones whose change is gone are dropped.
+// the clouds draw in one after another, but the whole sequence never takes more than about two seconds
+const stagger = (n) => Math.min(260, Math.round(2000 / Math.max(1, n)));
+
+// Earlier decisions for this sheet, matched to today's changes by where they are (shared/review.mjs: at
+// least half of the smaller box, each earlier change used once). Decisions on other sheets are kept as
+// they are; ones whose change is gone are dropped. The backend applies the same rule when it saves.
 function priorDecisions(review, clouds, sheetNo) {
-  const out = {}, saved = review.decisions || {};
-  const old = (review.clouds || []).filter((c) => (c.sheet || 1) === sheetNo && saved[c.id]);
-  for (const [id, d] of Object.entries(saved)) if (!id.startsWith(`s${sheetNo}-`)) out[id] = d;
-  const overlap = (p, q) => {
-    const w = Math.min(p[2], q[2]) - Math.max(p[0], q[0]), h = Math.min(p[3], q[3]) - Math.max(p[1], q[1]);
-    if (w <= 0 || h <= 0) return 0;
-    const area = (b) => (b[2] - b[0]) * (b[3] - b[1]);
-    return (w * h) / Math.max(1, Math.min(area(p), area(q)));
-  };
-  for (const c of clouds) {
-    const box = [c.x0, c.y0, c.x1, c.y1];
-    const best = old.map((o) => ({ o, f: overlap(box, o.box || [o.x0, o.y0, o.x1, o.y1]) })).sort((a, b) => b.f - a.f)[0];
-    if (best && best.f >= 0.5) out[c.id] = saved[best.o.id];
-  }
-  return out;
+  const others = {}, out = {}, saved = review.decisions || {};
+  for (const [id, d] of Object.entries(saved)) if (!id.startsWith(`s${sheetNo}-`)) others[id] = d;
+  const old = (review.clouds || []).filter((c) => (c.sheet || 1) === sheetNo && saved[c.id]).map((c) => ({ ...c, sheet: sheetNo, box: c.box || [c.x0, c.y0, c.x1, c.y1] }));
+  const match = matchChanges(old, clouds.map((c) => ({ id: c.id, sheet: sheetNo, box: [c.x0, c.y0, c.x1, c.y1] })));
+  for (const [nid, oid] of Object.entries(match)) out[nid] = saved[oid];
+  return { others, mine: out };
 }
 
 // What the engine set aside: line work that a re-export nudged by under 0.7 mm and that matches once
@@ -799,7 +834,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
   }, [active, visible]);
   if (state === 'signed' && !active) {
     return (
-      <li ref={rowRef} className={`rl-row signed compact ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
+      <li ref={rowRef} className={`rl-row signed compact ${visible ? 'in' : ''}`} style={{ '--delay': `${i * stagger(res.clouds.length)}ms` }}>
         <button className="rl-row-main" onClick={() => onSelect(c)}>
           <span className="delta">{c.n}</span>
           <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{d.status === 'declared' ? `Note ${d.note}` : 'Accepted'}, signed by {d.signedBy}</span>
@@ -808,7 +843,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
     );
   }
   return (
-    <li ref={rowRef} className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
+    <li ref={rowRef} className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * stagger(res.clouds.length)}ms` }}>
       <button className="rl-row-main" onClick={() => onSelect(c)}>
         <span className="delta">{c.n}</span>
         <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{kindText(c)}</span>
@@ -826,11 +861,11 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
           <p className="st">Sent back to the drafter. <button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null })}>Undo</button></p>
         ) : d.status === 'declared' || d.status === 'accepted' ? (
           <>
-            <p className="st">{d.status === 'declared' ? <>Declared in note {d.note}</> : <>Accepted as a drawing correction</>}
+            <p className="st">{d.status === 'declared' ? (notes.some((n) => n.n === d.note) ? <>Declared in note {d.note}</> : <>Declared in note {d.note}, which is no longer in the change notes. Declare it again.</>) : <>Accepted as a drawing correction</>}
               {' '}<button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null, signedBy: null, signedAt: null, valueOk: null })}>Change</button></p>
             {d.status === 'declared' && <ValueCheck c={c} d={d} note={notes.find((n) => n.n === d.note)} onDecide={onDecide} />}
             {d.signedBy ? <p className="signed">Signed off by {d.signedBy}, {new Date(d.signedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
-              : (d.status === 'declared' && !d.valueOk && valueSlip(c, notes.find((n) => n.n === d.note)?.text).length) ? null
+              : (d.status === 'declared' && (!notes.some((n) => n.n === d.note) || (!d.valueOk && valueSlip(c, notes.find((n) => n.n === d.note)?.text).length))) ? null
               : <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>}
           </>
         ) : (

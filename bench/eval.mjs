@@ -23,7 +23,8 @@ const pad = 8, hit = (c, r) => !(c.x1 < r[0] - pad || c.x0 > r[2] + pad || c.y1 
 const byKind = {}; let found = 0, total = 0, falseClouds = 0, cleanFalse = 0, cleanPairs = 0, ms = 0, regErr = [];
 for (const e of idx) {
   const A = pgm(path.join(dir, e.id + '_a.pgm')), B = pgm(path.join(dir, e.id + `_${variant}.pgm`));
-  const r = compare(A, B, { ...(variant === 'bs' ? { tol: 3 } : {}), ...JSON.parse(process.env.RL_OPTS || '{}') });
+  // the same options the app passes at 150 dpi (analysis.js): grouping 7.6 mm, re-plot shift 0.68 mm, moves to 5 mm
+  const r = compare(A, B, { gap: 45, shiftPx: 4, moveMaxPx: 30, ...JSON.parse(process.env.RL_OPTS || '{}') });
   ms += r.ms.register + r.ms.diff;
   const fc = r.clouds.filter((c) => !e.truth.some((t) => hit(c, t.px))).length;
   e.truth = e.truth.filter((t) => t.visible);

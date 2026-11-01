@@ -57,7 +57,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
 // workflow validator, the dashboard gadget and the Rovo actions all use this, never the issue property.
 export function verdictOf(attachments, review, notes = null) {
   const pdfs = (attachments || []).filter((a) => a.mimeType === 'application/pdf')
-    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id);
+    .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
   if (pdfs.length < 2) {
     // a work item that never had two revisions is not a drawing change; one whose reviewed PDF was
     // deleted afterwards must not slip through
@@ -69,7 +69,7 @@ export function verdictOf(attachments, review, notes = null) {
   if (review.revA?.id && +review.revA.id !== +a.id) return { blocked: true, text: 'the review compared a different pair of revisions' };
   // the newest photo on the work item must be the print the review read (or set aside as not a print)
   const photos = (attachments || []).filter((x) => /^image\/(jpeg|png|webp)$/.test(x.mimeType))
-    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id);
+    .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
   if (photos.length && +review.print?.id !== +photos[photos.length - 1].id) {
     return { blocked: true, text: 'the newest photo of a marked-up print has not been read on the light table' };
   }

@@ -84,9 +84,16 @@ modules:
         ignoreSelf: true
         expression: "event.changelog != null && event.changelog.items.some(i => i.field == 'Attachment' || i.field == 'description')"
         onError: RECEIVE_AND_LOG
+    # a deleted work item takes Redline's records about it with it
+    - key: redline-forget-deleted
+      function: onIssueDeleted
+      events:
+        - avi:jira:deleted:issue
   function:
     - key: onIssueUpdated
       handler: index.onIssueUpdated
+    - key: onIssueDeleted
+      handler: index.onIssueDeleted
     - key: resolver
       handler: index.handler
     - key: getDrawingReview

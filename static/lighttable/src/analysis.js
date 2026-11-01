@@ -6,7 +6,7 @@ import { readMarkups } from './engine/markup.mjs';
 import { numbersIn } from '../../../shared/gate.mjs';
 import { withHousekeeping } from './engine/housekeeping.mjs';
 
-export const ENGINE_VERSION = 'redline-core 0.4';
+export { ENGINE_VERSION } from '../../../shared/review.mjs';
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 // ASME Y14.1 style zones: columns numbered right to left, rows lettered bottom to top.
@@ -189,7 +189,7 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
   // between revisions cannot turn into a change of scale
   await Promise.all([fetchBytes(invoke, revA.id), fetchBytes(invoke, revB.id)]);
   let hA = await loadRevision(invoke, revA, 300, page);
-  let hB = await loadRevision(invoke, revB, hA.missing ? 300 : hA.dpi, page, 24e6);
+  let hB = await loadRevision(invoke, revB, hA.missing ? 300 : hA.dpi, page, 16e6);
   if (hA.missing || hB.missing) {
     if (hA.missing && hB.missing) throw new Error(`Neither revision has a sheet ${page}`);
     const present = hA.missing ? hB : hA;
@@ -207,7 +207,10 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
   onStage('Lining up the sheets');
   await new Promise((r) => setTimeout(r, 0));
   const t0 = performance.now();
-  const r = compare(A, B, { gap: 45 }); // changes within ~7 mm read as one edit
+  // distances are set in millimetres and scaled to this sheet's resolution: changes within ~7.6 mm read as
+  // one edit, re-plot shifts are under ~0.7 mm, moves are measured up to ~5 mm (45, 4 and 30 px at 150 dpi)
+  const px = (mm) => Math.max(1, Math.round((mm * dpi) / 25.4));
+  const r = compare(A, B, { gap: px(7.62), shiftPx: px(0.68), moveMaxPx: px(5.08) });
   const Bw = warpGray(B, r.transform, A.w, A.h);
   const ms = Math.round(performance.now() - t0);
   // the same transform at display resolution: translation scales with the raster, the linear part does not
