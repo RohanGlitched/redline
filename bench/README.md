@@ -62,3 +62,4 @@ The generated rasters take about 4 GB, so they are not in the repository. Seeds 
 - The rescans and phone photos are simulated. Real scans with folds, coffee stains or a sheet partly out of frame are not covered yet.
 - A change smaller than about 25 dark pixels at 150 dpi (roughly a 0.4 mm stroke) is below what the engine reports.
 - Two edits within about 7 mm of each other are drawn as one cloud on purpose, the way a drafter would cloud them.
+- A feature moved by less than about 0.85 mm on paper can look like a re-plot nudge: under about 0.4 mm it is not reported, and up to about 0.7 mm it goes to the Set aside list. The planted moves here are 1.5 to 4 mm. That is why the release gate needs a person to confirm, by name, whatever was set aside.
