@@ -381,7 +381,7 @@ function ValueCheck({ c, d, note, onDecide }) {
   if (d.valueOk) return <p className="rl-value ok">Drawing value {slip.join(', ')} confirmed against note {note.n} by {d.valueOk.by}</p>;
   return (
     <div className="rl-value slip" role="alert">
-      <p><b>The drawing says {slip.join(', ')}.</b> Note {note.n} does not: “{note.text}”</p>
+      <p><b>Drawing says {slip.join(', ')}; note {note.n} does not.</b> Note {note.n}: “{note.text}”</p>
       <div className="rl-choices">
         <button className="rl-btn" onClick={() => onDecide(c.id, { valueOk: { by: 'you', at: new Date().toISOString() } })}>The drawing is right</button>
         <button className="rl-btn danger" onClick={() => onDecide(c.id, { status: 'rejected', note: null })}>Send back</button>

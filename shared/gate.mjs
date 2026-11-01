@@ -27,15 +27,19 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   // every sheet of a multi-sheet drawing has to be compared before release
   const unseen = sheets && sheets.count > 1 ? sheets.count - new Set(sheets.done || []).size : 0;
   const blocked = open + unsigned + rejected + mismatched + markups + unseen > 0;
-  let text;
-  if (unseen) text = `${unseen} of ${sheets.count} sheets ${unseen === 1 ? 'is' : 'are'} not compared yet`;
-  else if (!clouds.length && !marks.length) text = 'No differences found between the revisions';
-  else if (rejected) text = `${rejected} ${rejected === 1 ? 'change was' : 'changes were'} sent back to the drafter`;
-  else if (open) text = `${open} ${open === 1 ? 'change on the drawing is' : 'changes on the drawing are'} not in the change notes`;
-  else if (mismatched) text = `${mismatched} declared ${mismatched === 1 ? 'change shows a value its change note does not' : 'changes show values their change notes do not'}`;
-  else if (markups) text = `${markups} pen ${markups === 1 ? 'markup on the printed sheet needs' : 'markups on the printed sheets need'} an answer`;
-  else if (unsigned) text = `${unsigned} declared ${unsigned === 1 ? 'change needs' : 'changes need'} a sign-off`;
-  else text = `All ${clouds.length} changes declared and signed off`;
+  // every reason the release is held, most serious first, so the verdict never hides a second problem
+  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const parts = [
+    unseen && `${unseen} of ${sheets.count} sheets ${unseen === 1 ? 'is' : 'are'} not compared yet`,
+    rejected && `${n(rejected, 'change was', 'changes were')} sent back to the drafter`,
+    open && `${n(open, 'change on the drawing is', 'changes on the drawing are')} not in the change notes`,
+    mismatched && `${n(mismatched, 'declared change shows a value its change note does not', 'declared changes show values their change notes do not')}`,
+    markups && `${n(markups, 'pen markup on the printed sheet needs', 'pen markups on the printed sheets need')} an answer`,
+    unsigned && `${n(unsigned, 'declared change needs', 'declared changes need')} a sign-off`,
+  ].filter(Boolean);
+  const text = parts.length ? parts.join('; ')
+    : !clouds.length && !marks.length ? 'No differences found between the revisions'
+    : `All ${clouds.length} changes declared and signed off`;
   return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, text };
 }
 
