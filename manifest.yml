@@ -4,7 +4,7 @@ modules:
       resource: main
       resolver:
         function: resolver
-      viewportSize: medium
+      viewportSize: large
       title: Redline
       icon: resource:main;redline-icon.svg
   # Index the review so JQL (and Rovo) can find change orders whose release is blocked.
