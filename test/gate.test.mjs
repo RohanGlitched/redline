@@ -486,3 +486,21 @@ test('one reading of revision names everywhere: lowercase after a separator, a d
   assert.equal(drawingOf('BRKT0142 RevD1.pdf'), 'brkt0142');
   assert.equal(revisionOfName('plate_revs.pdf'), null);
 });
+
+test('a drawing PDF attached after the review and named as an earlier revision holds the release', () => {
+  const pdf = (id, filename, h) => ({ id, filename, mimeType: 'application/pdf', created: `2026-11-02T0${h}:00:00Z` });
+  const review = { revA: { id: 1 }, revB: { id: 2 }, clouds: [], decisions: { __ack: { status: 'ack', signedBy: 'Asha' } } };
+  assert.equal(verdictOf([pdf(1, 'X_rev-C.pdf', 1), pdf(2, 'X_rev-D.pdf', 2)], review).blocked, false);
+  assert.equal(verdictOf([pdf(1, 'X_rev-C.pdf', 1), pdf(2, 'X_rev-D.pdf', 2), pdf(3, 'X_rev-C2.pdf', 3)], review).blocked, true);
+});
+
+test('a note "X to Y" with a drawing that went back from Y to X is a slip', () => {
+  assert.deepEqual(noteSlip({ before: 'Ø25.5', after: 'Ø25' }, 'Zone D2: bore Ø25 to Ø25.5'), [25.5]);
+  assert.deepEqual(noteSlip({ before: 'Ø25', after: 'Ø25.5' }, 'Zone D2: bore Ø25 to Ø25.5'), []);
+});
+
+test('a carried change accepted and signed meets the note it was declared in before', () => {
+  const notes = [{ n: 1, text: 'Zone D2: bore Ø25 to Ø25.5' }];
+  const c = [{ id: 'k-s1-c1', carried: { note: 1 } }];
+  assert.equal(gateOf(c, { 'k-s1-c1': { status: 'accepted', signedBy: 'Asha' } }, [], {}, null, notes).blocked, false);
+});

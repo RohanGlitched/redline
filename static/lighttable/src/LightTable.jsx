@@ -117,10 +117,6 @@ export default function LightTable() {
           for (const c of o.review.clouds || []) (bySheet[c.sheet || 1] ||= []).push(c);
           setSheets({ count: o.review.sheets?.count || 1, compared: Object.fromEntries((o.review.sheets?.done || []).map((n) => [n, bySheet[n] || []])) });
           if (o.review.markDecisions) setMarkDecisions(o.review.markDecisions);
-        } else if (o.review?.markDecisions) {
-          // a new pair of revisions: pen markups answered before keep their answers (the photo is the same print)
-          const attached = new Set((o.images || []).map((a) => String(a.id)));
-          setMarkDecisions(Object.fromEntries(Object.entries(o.review.markDecisions).filter(([id, d]) => attached.has(/^p(\d+)-/.exec(id)?.[1]) && d?.status && d.status !== 'open')));
         }
         versionRef.current = o.review?.version || 0;
         await loadSheet(o, 1, revA, revB);
@@ -190,7 +186,17 @@ export default function LightTable() {
       const ox = (r.width - photo.w * fitK) / 2, oy = (r.height - photo.h * fitK) / 2;
       const from = result.corners.map(([x, y]) => [ox + x * fitK, oy + y * fitK]);
       const to = [[c.x, c.y], [c.x + res.A.w * c.s, c.y], [c.x + res.A.w * c.s, c.y + res.A.h * c.s], [c.x, c.y + res.A.h * c.s]];
-      setMarkDecisions((m) => ({ ...m, ...Object.fromEntries(result.marks.map((k) => [k.id, m[k.id] || { status: 'open' }])) }));
+      // answers given before follow the markup by where it is on the print (a new read can number them differently)
+      const before = (order?.review?.marks || []).filter((m) => m.id.startsWith(`p${att.id}-`)).map((m) => ({ ...m, x0: m.box?.[0], y0: m.box?.[1], x1: m.box?.[2], y1: m.box?.[3] }));
+      const was = order?.review?.markDecisions || {}, used = new Set();
+      const answerFor = (k) => {
+        const kb = [k.x0, k.y0, k.x1, k.y1];
+        const hit = before.filter((m) => !used.has(m.id) && m.box && overlap(m.box, kb) >= 0.3).sort((a, b) => overlap(b.box, kb) - overlap(a.box, kb))[0];
+        if (!hit) return null;
+        used.add(hit.id);
+        return was[hit.id]?.status && was[hit.id].status !== 'open' ? was[hit.id] : null;
+      };
+      setMarkDecisions((m) => ({ ...m, ...Object.fromEntries(result.marks.map((k) => { const a = answerFor(k); return [k.id, m[k.id] && m[k.id].status !== 'open' && !a ? m[k.id] : a || m[k.id] || { status: 'open' }]; })) }));
       if (reduceMotion) { setPrint({ att, status: 'done', result }); setMode((m) => (sheetRef.current === 1 ? 'print' : m)); return; }
       // hold the photo as taken for a beat, then let it settle onto the sheet
       setFlatten({ url, src: result.corners, from, to, t: 0, w: photo.w, h: photo.h });
@@ -240,7 +246,7 @@ export default function LightTable() {
     const ids = new Set((order?.images || []).map((a) => String(a.id)));
     return (order?.review?.marks || []).filter((m) => {
       const photo = /^p(\d+)-/.exec(m.id)?.[1];
-      return photo && ids.has(photo) && photo !== String(print?.att?.id) && !marks.some((x) => x.id === m.id);
+      return photo && ids.has(photo) && !marks.some((x) => x.id === m.id) && (photo !== String(print?.att?.id) || !marks.some((x) => m.box && overlap(m.box, [x.x0, x.y0, x.x1, x.y1]) >= 0.3));
     }).map((m) => ({ ...m, x0: m.box?.[0], y0: m.box?.[1], x1: m.box?.[2], y1: m.box?.[3], earlier: true }));
   }, [order, print, marks]);
   // someone who can view the work item but not edit it sees the review without the controls to change it
@@ -429,7 +435,7 @@ export default function LightTable() {
 
   const select = (c) => {
     if (!c) return;
-    const isMark = marks.some((m) => m.id === c.id), on = isMark ? 1 : c.sheet || res.sheet;
+    const isMark = marks.some((m) => m.id === c.id), on = isMark ? 1 : c.carried && (c.sheet || 1) > sheets.count ? res.sheet : c.sheet || res.sheet;
     if (on !== res.sheet) { focusRef.current = { id: c.id, sheet: on }; if (!turning) goSheet(on); return; }
     // a drawing change is shown on the drawing (the photo's handwriting would cover it); a pen markup on the photo
     setMode((m) => (isMark ? 'print' : m === 'print' ? 'overlay' : m));
@@ -460,8 +466,9 @@ export default function LightTable() {
   // write an undeclared change up as the next change note, then declare it there (the reviewer still signs)
   const addNote = async (c, text) => {
     try {
-      const out = await invoke('addNote', { text });
+      const out = await invoke('addNote', { text, expect: order.notes.map((x) => `${x.n}:${noteKey(x.text)}`).join('|') });
       if (out?.readOnly) return;
+      if (out?.stale) { setOrder((o) => ({ ...o, notes: out.notes })); setSaved('The change notes were edited since this light table opened; they are reloaded. Read them, then add the note again if it is still needed.'); return; }
       setOrder((o) => ({ ...o, notes: out.notes }));
       decide(c.id, { status: 'declared', note: out.n });
     } catch (e) { setSaved('Could not add the note: ' + (e.message || e)); }

@@ -3,7 +3,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs, pairOf, revLabel } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
-import { ENGINE_VERSION, matchChanges, sameReview, settleSignatures, carriedChanges, notesDoneBefore } from '../shared/review.mjs';
+import { ENGINE_VERSION, matchChanges, overlap, sameReview, settleSignatures, carriedChanges, notesDoneBefore } from '../shared/review.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
 
 export { verdictOf, notesFromAdf };
@@ -54,7 +54,7 @@ export async function loadChangeOrder(key) {
     pair: pairOf(pick.pdfs, review).map((a) => +a.id),
     drawingConflict: pick.conflict || 0,
     // PDFs that are not this drawing's revisions (an ECO form, a test report): each can be set aside by name
-    otherPdfs: (issue.fields.attachment || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')) && !pick.pdfs.some((p) => +p.id === +a.id))
+    otherPdfs: (issue.fields.attachment || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')) && !pairOf(pick.pdfs, review).some((p) => +p.id === +a.id))
       .map((a) => ({ id: +a.id, filename: a.filename, created: a.created })),
     review,
     // the same verdict the release validator would give right now
@@ -176,15 +176,30 @@ resolver.define('saveReview', async (req) => {
   if (!sameRevs && stored) {
     const mids = new Set((r.marks || []).map((m) => m.id));
     const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
-    const open = (stored.marks || []).filter((m) => !mids.has(m.id) && stillAttached(photoOf(m)));
+    // (a stored markup the new read found again, in the same place, is the new one: it is not kept twice)
+    const refound = (m) => (r.marks || []).some((x) => photoOf(x) === photoOf(m) && m.box && x.box && overlap(m.box, x.box) >= 0.3);
+    // an answer follows its markup by place: when a new read numbers markups differently, an answer the browser carried
+    // by number to a markup in another place is replaced by the answer given to the markup in this place
+    r.markDecisions = { ...(r.markDecisions || {}) };
+    for (const x of r.marks || []) {
+      const here = (stored.marks || []).find((m) => photoOf(m) === photoOf(x) && m.box && x.box && overlap(m.box, x.box) >= 0.3);
+      if (!here) continue;
+      const sent = r.markDecisions[x.id], byNumber = stored.markDecisions?.[x.id], placed = stored.markDecisions?.[here.id];
+      // nothing said in this session: the answer given before to the markup in this place stands (no second Raise)
+      if (!sent || sent.status === 'open') { if (placed && placed.status !== 'open') r.markDecisions[x.id] = placed; continue; }
+      if (here.id !== x.id && byNumber && sent.status === byNumber.status) r.markDecisions[x.id] = placed || { status: 'open' };
+    }
+    const open = (stored.marks || []).filter((m) => !mids.has(m.id) && stillAttached(photoOf(m)) && !refound(m));
     r.marks = [...(r.marks || []), ...open];
     // answers given before stand (a markup raised as ENG-7 is never offered for raising again)
-    const answers = Object.fromEntries((stored.marks || []).filter((m) => stillAttached(photoOf(m))).map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v && v.status !== 'open'));
+    const answers = Object.fromEntries(open.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v && v.status !== 'open'));
     r.markDecisions = { ...(r.markDecisions || {}), ...Object.fromEntries(Object.entries(answers).filter(([id]) => !r.markDecisions?.[id] || r.markDecisions[id].status === 'open')) };
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []), ...carriedChanges(stored, r.revA, notes).filter((c) => !ids.has(c.id))];
-    r.notesDone = notesDoneBefore(stored, r.revA, notes);
+    // notes done before count only when this pair continues the last one (a deleted revision undoes them)
+    r.notesDone = +stored.revB?.id === +r.revA?.id ? notesDoneBefore(stored, r.revA, notes) : [];
   } else if (sameRevs) r.notesDone = stored.notesDone || [];
+  else r.notesDone = [];
   if (reread) {
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []), ...(stored.clouds || []).filter((c) => c.carried && !ids.has(c.id))];
@@ -300,6 +315,9 @@ resolver.define('addNote', async (req) => {
   const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=description`)).json();
   const doc = issue.fields.description || { type: 'doc', version: 1, content: [] };
   const before = notesFromAdf(doc), n = before.length ? Math.max(...before.map((x) => x.n)) + 1 : 1;
+  // the description must read as the light table showed it: someone else's edit since is never written over
+  const said = (list) => list.map((x) => `${x.n}:${noteKey(x.text)}`).join('|');
+  if (req.payload?.expect != null && said(before) !== req.payload.expect) return { stale: true, notes: before };
   const item = { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] };
   const lists = (doc.content || []).filter((x) => x.type === 'orderedList');
   const last = lists[lists.length - 1];
@@ -309,7 +327,13 @@ resolver.define('addNote', async (req) => {
     doc.content.push({ type: 'orderedList', attrs: { order: n }, content: [item] });
   }
   await jira(route`/rest/api/3/issue/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { description: doc } }) });
-  return { notes: notesFromAdf(doc), n };
+  // the audit log says who wrote the note from the light table
+  const me = await (await jira(route`/rest/api/3/myself`)).json();
+  const audit = (await kvs.get(auditKey(issue.id ?? (await (await jira(route`/rest/api/3/issue/${key}?fields=summary`)).json()).id))) || [];
+  return { notes: notesFromAdf(doc), n, ...(await (async () => { try {
+    audit.push({ at: new Date().toISOString(), by: me.accountId, name: me.displayName, noteAdded: { n, text } });
+    await kvs.set(auditKey(issue.id), audit.slice(-200)); return {};
+  } catch { return {}; } })()) };
 });
 
 // A judge or new user on an empty site can add the bundled sample change order (two public-domain

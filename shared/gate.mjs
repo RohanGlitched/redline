@@ -28,7 +28,10 @@ export function noteSlip(cloud, noteText) {
     .flatMap((m) => (m[3] != null ? [m[3], m[4]] : [m[1] ?? m[2]])).map((v) => parseFloat(v.replace(',', '.')));
   const before = numbersIn(cloud.before), after = numbersIn(cloud.after);
   if (!said.some((v) => before.includes(v))) return [];
-  return [...new Set(said.filter((v) => !before.includes(v) && !after.includes(v)))];
+  // "Ø25 to Ø25.5": the new value must be on the drawing now (a drawing that went back from 25.5 to 25 has it only before)
+  const pairs = [...text.matchAll(/(\d*[.,]?\d+)\s*(?:to|→|->|becomes)\s*[Ø⌀∅R]?\s*(\d*[.,]?\d+)/g)].map((m) => [m[1], m[2]].map((v) => parseFloat(v.replace(',', '.'))));
+  const backwards = pairs.filter(([x, y]) => x !== y && !after.includes(y) && before.includes(y)).map(([, y]) => y);
+  return [...new Set([...said.filter((v) => !before.includes(v) && !after.includes(v)), ...backwards])];
 }
 
 // "The drawing is right" stands for the note as it read when said; a rewritten note asks again.
@@ -59,6 +62,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   const unmet = notes?.length && (!sheets || sheets.count <= 1 || new Set(sheets.done || []).size >= sheets.count)
     ? notes.filter((nt) => {
       if (clouds.some((c) => decisions[c.id]?.status === 'declared' && decisions[c.id]?.note === nt.n)) return false;
+      if (clouds.some((c) => c.carried?.note === nt.n && decisions[c.id]?.status === 'accepted' && decisions[c.id]?.signedBy)) return false;
       if ((extra.notesDone || []).some((x) => x.n === nt.n && x.noteText === noteKey(nt.text))) return false;
       const x = decisions[`note${nt.n}`];
       return !(x?.signedBy && (x.noteText == null || x.noteText === noteKey(nt.text)));
@@ -174,8 +178,11 @@ export function verdictOf(attachments, review, notes = null) {
   }
   if (!review) return { blocked: true, text: 'the drawing revisions have not been compared yet' };
   const reviewedB = (attachments || []).find((a) => +a.id === +review.revB?.id);
+  // any PDF attached after the reviewed revision that is not in the pair compared: an unnamed one, or one named as an
+  // earlier revision ("rev C2" after a C to D review), holds until compared or set aside by name
+  const [pa, pb] = pairOf(pdfs, review);
   const unplaced = reviewedB ? (attachments || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''))
-    && !pdfs.some((p) => +p.id === +a.id) && (Date.parse(a.created) > Date.parse(reviewedB.created) || +a.id > +reviewedB.id)
+    && +a.id !== +pa?.id && +a.id !== +pb?.id && (Date.parse(a.created) > Date.parse(reviewedB.created) || +a.id > +reviewedB.id)
     && !review.decisions?.[`pdf${a.id}`]?.signedBy) : [];
   if (unplaced.length) return { blocked: true, text: `${unplaced.map((a) => a.filename).join(', ')} ${unplaced.length === 1 ? 'was' : 'were'} attached after the reviewed revision and is not compared; a new revision should be named like the others so Redline compares it; anything else, set it aside on the light table` };
   const [a, b] = pairOf(pdfs, review);
