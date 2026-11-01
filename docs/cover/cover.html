@@ -1,0 +1,77 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: B612; src: url(B612-Regular.ttf); }
+@font-face { font-family: B612; src: url(B612-Bold.ttf); font-weight: 700; }
+:root { --table: #eef3f7; --edge: #d6e0e8; --graphite: #2b2f36; --diazo: #2c4a9a; --red: #d7263d; --hl: #f5d90a; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 1280px; height: 640px; overflow: hidden; }
+body { font-family: B612, sans-serif; color: var(--graphite);
+  background:
+    linear-gradient(var(--edge) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, var(--edge) 1px, transparent 1px) 0 0 / 32px 32px,
+    radial-gradient(ellipse at 66% 50%, #fbfdfe 0%, var(--table) 55%, #dfe7ee 100%); }
+.copy { position: absolute; left: 64px; top: 64px; width: 430px; }
+.mark { display: flex; align-items: center; gap: 12px; font: 700 30px B612; letter-spacing: .01em; }
+.mark svg { width: 34px; height: 30px; }
+h1 { margin: 44px 0 0; font: 700 38px/1.18 B612; letter-spacing: -.005em; text-wrap: balance; }
+p.lede { margin: 18px 0 0; font-size: 17px; line-height: 1.55; color: #44546f; }
+dl { margin: 38px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; align-items: baseline; }
+dt { font: 700 22px B612; color: var(--graphite); text-align: right; }
+dd { margin: 0; font-size: 15px; color: #44546f; }
+.foot { position: absolute; left: 64px; bottom: 44px; font-size: 13px; color: #626f86; }
+.sheet { position: absolute; right: 48px; top: 48px; width: 700px; height: 544px; background: #fafbfd; border-radius: 2px;
+  box-shadow: 0 1px 0 rgba(23,43,77,.08), 0 24px 48px -20px rgba(23,43,77,.35), 0 2px 6px rgba(23,43,77,.08);
+  transform: rotate(-1.2deg); overflow: hidden; }
+.sheet svg { width: 100%; height: 100%; display: block; }
+.cloud { fill: none; stroke: var(--red); stroke-width: 4.2; stroke-linejoin: round; stroke-linecap: round; }
+.tag path { fill: #fff; stroke: var(--red); stroke-width: 3.4; stroke-linejoin: round; }
+.tag text { font: 700 21px B612; fill: var(--red); }
+.decl .cloud { stroke: var(--diazo); } .decl.tag path { stroke: var(--diazo); } .decl.tag text { fill: var(--diazo); }
+</style></head>
+<body>
+<div class="copy">
+  <div class="mark">
+    <svg viewBox="-17 -17 34 30"><path d="M0,-15 L15,11 L-15,11 Z" fill="#fff" stroke="#d7263d" stroke-width="3" stroke-linejoin="round"/></svg>
+    Redline
+  </div>
+  <h1>Catches the drawing changes nobody wrote down.</h1>
+  <p class="lede">Compares two revisions of an engineering drawing inside Jira, clouds every change, and holds the release until each one is declared and signed off.</p>
+  <dl>
+    <dt>431/432</dt><dd>planted edits found on NIST test drawings</dd>
+    <dt>0</dt><dd>false clouds on unchanged sheets</dd>
+    <dt>0.25 s</dt><dd>a sheet, compared in the browser</dd>
+  </dl>
+</div>
+<div class="foot">A Forge app for Jira</div>
+<div class="sheet"><svg id="s" viewBox="70 200 1360 1057" preserveAspectRatio="xMidYMid slice">
+  <image href="revD_diazo.png" x="0" y="0" width="1650" height="1275"/>
+</svg></div>
+<script>
+// the same cloud the app draws: outward arcs around the change
+function cloudPath(x0, y0, x1, y1, pad, bump) {
+  const X0 = x0 - pad, Y0 = y0 - pad, X1 = x1 + pad, Y1 = y1 + pad, w = X1 - X0, h = Y1 - Y0;
+  const per = 2 * (w + h), n = Math.max(8, Math.round(per / (bump * 2))), pts = [];
+  for (let i = 0; i < n; i++) {
+    let t = (i / n) * per, x, y;
+    if (t < w) { x = X0 + t; y = Y0; } else if ((t -= w) < h) { x = X1; y = Y0 + t; }
+    else if ((t -= h) < w) { x = X1 - t; y = Y1; } else { t -= w; x = X0; y = Y1 - t; }
+    pts.push([x, y]);
+  }
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 1; i <= n; i++) { const [x, y] = pts[i % n], [px, py] = pts[i - 1]; const r = Math.hypot(x - px, y - py) * 0.62; d += ` A${r},${r} 0 0 1 ${x},${y}`; }
+  return d + 'Z';
+}
+// clouds found by the shipped engine on BRKT-0142 rev C to rev D (docs/cover/clouds.mjs)
+const clouds = [{"x0":1210,"y0":553,"x1":1293,"y1":597},{"x0":1030,"y0":635,"x1":1082,"y1":668},{"x0":796,"y0":882,"x1":851,"y1":913},{"x0":93,"y0":1131,"x1":339,"y1":1141}];
+const ns = 'http://www.w3.org/2000/svg', s = document.getElementById('s');
+// 1 and 4 are declared in the sample's change notes (blue); 2 and 3 are the undeclared ones (red)
+const declared = new Set([0, 3]);
+clouds.forEach((c, i) => {
+  const w = document.createElementNS(ns, 'g'); if (declared.has(i)) w.setAttribute('class', 'decl'); s.appendChild(w);
+  const p = document.createElementNS(ns, 'path'); p.setAttribute('d', cloudPath(c.x0, c.y0, c.x1, c.y1, 16, 13)); p.setAttribute('class', 'cloud'); w.appendChild(p);
+  const g = document.createElementNS(ns, 'g'); g.setAttribute('class', declared.has(i) ? 'tag decl' : 'tag'); g.setAttribute('transform', `translate(${c.x1 + 34} ${c.y0 - 22})`);
+  g.innerHTML = `<path d="M0,-17 L17,12 L-17,12 Z"/><text y="8" text-anchor="middle">${i + 1}</text>`; w.appendChild(g);
+});
+</script>
+</body></html>

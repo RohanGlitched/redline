@@ -3,3 +3,5 @@ static/*/node_modules/
 static/*/dist/
 .env*
 *.log
+docs/cover/*.pgm
+docs/cover/revD.png
