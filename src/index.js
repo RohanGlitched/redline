@@ -260,8 +260,8 @@ resolver.define('raiseMarkup', async (req) => {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type: { name: 'Relates' }, inwardIssue: { key: created.key }, outwardIssue: { key: eco } }),
   }).then(() => true).catch(() => false);
-  if (crop) await attach(created.key, `markup-zone-${zone}.jpg`, 'image/jpeg', crop).catch(() => {});
-  return { key: created.key, linked };
+  const cropAttached = crop ? await attach(created.key, `markup-zone-${zone}.jpg`, 'image/jpeg', crop).then(() => true).catch(() => false) : null;
+  return { key: created.key, linked, cropAttached };
 });
 
 // A judge or new user on an empty site can add the bundled sample change order (two public-domain

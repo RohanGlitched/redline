@@ -1,7 +1,7 @@
 // The light table: two drawing revisions registered on one sheet, every change clouded, every cloud
 // tied to a change-note line or held as undeclared, and the release gate that follows from it.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { invoke, closeModal, getFocus } from './bridge.js';
+import { invoke, closeModal, getFocus, openInNewTab } from './bridge.js';
 import { matchChanges, overlap } from '../../../shared/review.mjs';
 import { revisionOfName } from './engine/titleblock.mjs';
 import { meaningOf } from './engine/meaning.mjs';
@@ -235,14 +235,21 @@ export default function LightTable() {
     try {
       const crop = cropJpeg(print.result.flat, m);
       const r = await invoke('raiseMarkup', { zone: m.zone, summary: order.summary, project: order.project, issuetype: order.issuetype, crop, photo: print.att?.filename });
-      decideMark(m.id, { status: 'raised', key: r.key, by: order.user.displayName, at: new Date().toISOString() });
+      // the work item exists; a link or crop that did not go on is said, so someone can add it by hand
+      const missing = [r.linked === false && `not linked to ${order.key}`, r.cropAttached === false && 'the photo crop is not attached'].filter(Boolean).join(' and ');
+      decideMark(m.id, { status: 'raised', key: r.key, by: order.user.displayName, at: new Date().toISOString(), ...(missing ? { warn: missing } : {}) });
     } catch (e) { decideMark(m.id, { status: 'open', error: e.message }); }
   }
 
   // Close never drops a decision: a save still waiting runs now, and one on its way is waited for
   const closeSafely = async () => {
-    if (!readOnly && timerRef.current && runRef.current) { clearTimeout(timerRef.current); savePromise.current = runRef.current(); }
-    try { await savePromise.current; } catch { /* the save reports its own error */ }
+    // a decision made during a save starts another save when that one ends; wait for the last of them
+    for (let i = 0; i < 6 && !readOnly; i++) {
+      if (timerRef.current && runRef.current) { clearTimeout(timerRef.current); timerRef.current = null; savePromise.current = runRef.current(); }
+      const p = savePromise.current;
+      try { await p; } catch { /* the save reports its own error */ }
+      if (savePromise.current === p && !pending.current && !timerRef.current) break;
+    }
     closeModal();
   };
 
@@ -258,7 +265,6 @@ export default function LightTable() {
   // the new version, so two quick decisions never look like someone else saving in between.
   const saving = useRef(false), pending = useRef(false);
   const timerRef = useRef(null), runRef = useRef(null), savePromise = useRef(null);
-  const [saveTick, setSaveTick] = useState(0);
   useEffect(() => {
     // a comparison that found nothing is a review too: it is saved so the release can go ahead
     if (!res) return;
@@ -266,7 +272,6 @@ export default function LightTable() {
     // a save before the opening moment ends, or while the photo is still being read, would store a review
     // without its pen markups; it waits
     if (phase !== 'ready' || print?.status === 'reading' || (res.sheet === 1 && (order?.images || []).length && !print)) return;
-    if (saving.current) { pending.current = true; return; }
     const run = async () => {
       timerRef.current = null;
       saving.current = true;
@@ -312,14 +317,17 @@ export default function LightTable() {
       } catch (e) { setSaved('Not saved: ' + e.message); }
       finally {
         saving.current = false;
-        if (pending.current) { pending.current = false; setSaveTick((x) => x + 1); }
+        // decisions made while this save was on its way go out now, with the newest state
+        if (pending.current) { pending.current = false; savePromise.current = runRef.current?.(); }
       }
     };
+    // the newest state is always the one a waiting save sends
     runRef.current = run;
+    if (saving.current) { pending.current = true; return; }
     const t = setTimeout(() => { savePromise.current = run(); }, 500);
     timerRef.current = t;
     return () => clearTimeout(t);
-  }, [decisions, res, markDecisions, print, sheets, aside, saveTick, phase]);
+  }, [decisions, res, markDecisions, print, sheets, aside, phase]);
 
   const flyTo = useCallback((c) => {
     if (!stageRef.current || !c) return;
@@ -724,7 +732,7 @@ function PrintSection({ order, res, print, marks, markDecisions, sel, onSelect, 
                 <MarkCrop flat={print.result.flat} m={m} />
               </button>
               <div className="rl-row-act">
-                {d.status === 'raised' ? <p className="st">Raised as <b>{d.key}</b> by {d.by}. <button className="link" onClick={() => onDecideMark(m.id, { status: 'open' })}>Undo</button></p>
+                {d.status === 'raised' ? <p className="st">Raised as <button className="link" onClick={() => openInNewTab(`/browse/${d.key}`)}><b>{d.key}</b></button> by {d.by}.{d.warn ? <span className="rl-warn"> {d.key} is {d.warn}; add it there by hand.</span> : null} <button className="link" onClick={() => onDecideMark(m.id, { status: 'open' })}>Undo</button></p>
                   : d.status === 'covered' ? <p className="st">Covered by change {d.cloud}. <button className="link" onClick={() => onDecideMark(m.id, { status: 'open' })}>Undo</button></p>
                   : d.status === 'dismissed' ? <p className="st">Dismissed: not a drawing change. <button className="link" onClick={() => onDecideMark(m.id, { status: 'open' })}>Undo</button></p>
                   : (

@@ -98,3 +98,9 @@ export async function openPath(path) {
   if (DEV) { console.log('open', path); return; }
   await (await forgeP).router.navigate(path);
 }
+
+// Open a work item in a new tab, so the light table and its unsaved decisions stay where they are.
+export async function openInNewTab(path) {
+  if (DEV) { console.log('open in new tab', path); return; }
+  await (await forgeP).router.open(path);
+}

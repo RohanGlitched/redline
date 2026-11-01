@@ -29,8 +29,16 @@ export function textChanges(a = [], b = [], pad = 1) {
   for (const g of groups.values()) {
     // read line by line: words whose middles sit within half a line of each other are on one line
     const cy = (t) => (t.y0 + t.y1) / 2, lh = (t) => t.y1 - t.y0;
-    const read = (side) => g.filter((t) => t.side === side)
-      .sort((p, q) => (Math.abs(cy(p) - cy(q)) < Math.min(lh(p), lh(q)) * 0.5 ? p.x0 - q.x0 : cy(p) - cy(q))).map((t) => t.str.trim()).join(' ');
+    // (lines are formed first, top to bottom, then each is read left to right: a stable order)
+    const read = (side) => {
+      const lines = [];
+      for (const t of g.filter((w) => w.side === side).sort((p, q) => cy(p) - cy(q))) {
+        const line = lines[lines.length - 1];
+        if (line && Math.abs(cy(t) - line.cy) < Math.min(lh(t), line.h) * 0.5) line.words.push(t);
+        else lines.push({ cy: cy(t), h: lh(t), words: [t] });
+      }
+      return lines.map((l) => l.words.sort((p, q) => p.x0 - q.x0).map((t) => t.str.trim()).join(' ')).join(' ');
+    };
     const before = read('a'), after = read('b');
     if (norm(before) === norm(after)) continue;
     out.push({ x0: Math.min(...g.map((t) => t.x0)), y0: Math.min(...g.map((t) => t.y0)), x1: Math.max(...g.map((t) => t.x1)), y1: Math.max(...g.map((t) => t.y1)), before, after });
