@@ -1,7 +1,7 @@
 // Unit tests for the release verdict and change-note parsing. Run with: npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor, drawingPdfs } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 const pdf = (id, created) => ({ id: String(id), mimeType: 'application/pdf', created });
@@ -165,7 +165,7 @@ test('after a re-read, each earlier change is matched once, to the new change in
 
 test('a save that changes nothing is recognised; any decision or finding change is not', () => {
   const base = { revA: { id: 1 }, revB: { id: 2 }, engine: ENGINE_VERSION, clouds: [{ id: 's1-c1' }], decisions: { 's1-c1': { status: 'declared', note: 1, signedAt: 't1', signedBy: 'A' } } };
-  assert.equal(sameReview(base, { ...base, analysedAt: 'later', decisions: { 's1-c1': { status: 'declared', note: 1, signedAt: 't2' } } }), true);
+  assert.equal(sameReview(base, { ...base, analysedAt: 'later', decisions: { 's1-c1': { status: 'declared', note: 1, signedAt: 't1' } } }), true);
   assert.equal(sameReview(base, { ...base, decisions: { 's1-c1': { status: 'declared', note: 2, signedAt: 't1' } } }), false);
   assert.equal(sameReview(base, { ...base, clouds: [] }), false);
 });
@@ -306,4 +306,30 @@ test('"the drawing is right" is for the note as it read: a rewritten note asks a
   const g = gateOf(c, { c1: { ...said, noteText: 'Zone D2: bore Ø25 becomes Ø25.7', signedBy: 'Asha' } }, [], {}, null, [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.7' }]);
   assert.equal(g.mismatched, 1);
   assert.equal(valueOkFor(said, { text: 'Zone D2: bore Ø25 becomes Ø25.7' }), false);
+});
+
+test('note numbers that are not dimensions are not read as promised values', () => {
+  const c = { before: 'Ø25 ±0.15', after: 'Ø25.5 ±0.15' };
+  assert.deepEqual(noteSlip(c, 'Zone D2: bore Ø25 becomes Ø25.5 for bearing 6205, per ECR 1043, 2 places'), []);
+  assert.deepEqual(noteSlip({ before: 'Ø25 ±0.15', after: 'Ø25 ±0.15' }, 'bore Ø25 becomes Ø25.5'), [25.5]);
+});
+
+test('a confirmation of what was set aside covers that list; a longer list asks again', () => {
+  const ack = { __ack: { status: 'ack', signedBy: 'Asha', asideCount: 2 } };
+  assert.equal(gateOf([], ack, [], {}, null, null, { setAside: 2 }).blocked, false);
+  assert.equal(gateOf([], ack, [], {}, null, null, { setAside: 3 }).blocked, true);
+});
+
+test('a new signature is a change to save, even when the decision reads the same', () => {
+  const base = { revA: { id: 1 }, revB: { id: 2 }, engine: 'e', clouds: [], decisions: { c1: { status: 'declared', note: 1, signedAt: '2026-11-02T01:00:00Z' } } };
+  assert.equal(sameReview(base, { ...base, decisions: { c1: { status: 'declared', note: 1, signedAt: '2026-11-02T02:00:00Z' } } }), false);
+  assert.equal(sameReview(base, JSON.parse(JSON.stringify(base))), true);
+});
+
+test('the drawing revisions are the PDFs named as revisions of one drawing; forms and reports are left alone', () => {
+  const pdf = (id, filename) => ({ id, filename, mimeType: 'application/pdf', created: `2026-11-02T0${id}:00:00Z` });
+  const { pdfs } = drawingPdfs([pdf(1, 'BRKT-0142_rev-C.pdf'), pdf(2, 'ECO-1043_rev-B.pdf'), pdf(3, 'BRKT0142 Rev D.pdf'), pdf(4, 'FAI-report.pdf')]);
+  assert.deepEqual(pdfs.map((a) => a.id), [1, 3]);
+  // no revision names at all: every PDF counts, as before
+  assert.deepEqual(drawingPdfs([pdf(1, 'a.pdf'), pdf(2, 'b.pdf')]).pdfs.map((a) => a.id), [1, 2]);
 });

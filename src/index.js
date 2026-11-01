@@ -1,10 +1,9 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { gateOf, verdictOf, valueSlip, noteSlip, noteKey } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 import { ENGINE_VERSION, matchChanges, sameReview } from '../shared/review.mjs';
-import { revisionOfName } from '../static/lighttable/src/engine/titleblock.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
 
 export { verdictOf, notesFromAdf };
@@ -36,10 +35,8 @@ export async function loadChangeOrder(key) {
   if (res.status === 404) throw new Error(`Work item ${key} was not found or you cannot see it`);
   const issue = await res.json();
   const review = (await kvs.get(reviewKey(issue.id))) || null;
-  const attachments = (issue.fields.attachment || [])
-    .filter((a) => a.mimeType === 'application/pdf')
-    .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id)
-    .map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, author: a.author?.displayName }));
+  const pick = drawingPdfs(issue.fields.attachment);
+  const attachments = pick.pdfs.map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, author: a.author?.displayName }));
   const images = (issue.fields.attachment || [])
     .filter((a) => /^image\/(jpeg|png|webp)$/.test(a.mimeType))
     .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id)
@@ -54,6 +51,7 @@ export async function loadChangeOrder(key) {
     status: issue.fields.status?.name,
     notes: notesFromAdf(issue.fields.description),
     attachments,
+    drawingConflict: pick.conflict || 0,
     review,
     // the same verdict the release validator would give right now
     verdict: verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description)),
@@ -142,8 +140,7 @@ resolver.define('saveReview', async (req) => {
   if (stored && (stored.version || 0) !== base) return { conflict: true, review: stored };
   const r = req.payload.review, now = new Date().toISOString();
   // a review is always of the two newest PDF revisions on the work item, named by id
-  const pdfs = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf')
-    .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
+  const { pdfs } = drawingPdfs(issue.fields.attachment);
   const [newA, newB] = pdfs.slice(-2);
   if (!newA || !newB || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'This review is not of the two newest drawing revisions. Reopen the light table to compare them.' };
   if (r.engine !== ENGINE_VERSION) return { stale: true, error: 'This light table is out of date. Close it and open it again to load the current version of Redline.' };
@@ -155,7 +152,7 @@ resolver.define('saveReview', async (req) => {
   const storedCloud = new Map((stored?.clouds || []).map((c) => [c.id, c])), newCloud = new Map((r.clouds || []).map((c) => [c.id, c]));
   const readsSame = (a, b) => !!a && !!b && a.kind === b.kind && (a.before ?? null) === (b.before ?? null) && (a.after ?? null) === (b.after ?? null) && JSON.stringify(a.values || []) === JSON.stringify(b.values || []);
   // after a re-read, a decision (and its signature) follows its change only if the change still reads the same
-  const beforeOf = (id) => (reread ? (readsSame(storedCloud.get(carried[id]), newCloud.get(id)) ? stored.decisions?.[carried[id]] : undefined) : stored?.decisions?.[id]);
+  const beforeOf = (id) => (!sameRevs ? undefined : reread ? (readsSame(storedCloud.get(carried[id]), newCloud.get(id)) ? stored.decisions?.[carried[id]] : (id === '__ack' ? stored.decisions?.[id] : undefined)) : stored?.decisions?.[id]);
   // the light table can save before it has read the photo again: the stored photo and its markups stand
   const stillAttached = (id) => (issue.fields.attachment || []).some((a) => +a.id === +id);
   if (sameRevs && !r.print && stored.print && stillAttached(stored.print.id)) { r.print = stored.print; r.marks = stored.marks || []; r.markDecisions = { ...(stored.markDecisions || {}), ...(r.markDecisions || {}) }; }
@@ -175,7 +172,7 @@ resolver.define('saveReview', async (req) => {
     if (noteText != null) d.noteText = noteText; else delete d.noteText;
     if (d.signedAt && same && before.signedById) { d.signedAt = before.signedAt; d.signedById = before.signedById; d.signedBy = before.signedBy; }
     // the signer is whoever is calling, named by Jira, never a name the browser sent
-    else if (d.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); }
+    else if (d.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); if (id === '__ack') d.asideCount = (r.setAside || []).length + ((sameRevs && !reread ? (stored.setAside || []).filter((a) => !(r.setAside || []).some((b) => b.id === a.id)).length : 0)); }
     if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
     // "the drawing is right" on a value slip is a decision too: named by Jira, kept as first recorded
     // "the drawing is right" is kept as first recorded, for the note's words; a rewritten note drops it
@@ -194,6 +191,8 @@ resolver.define('saveReview', async (req) => {
     const was = new Map((stored.clouds || []).map((c) => [c.id, c]));
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []).map((c) => (was.has(c.id) ? { ...c, ...was.get(c.id) } : c)), ...(stored.clouds || []).filter((c) => !ids.has(c.id))];
+    const asideIds = new Set((r.setAside || []).map((a) => a.id));
+    r.setAside = [...(r.setAside || []), ...(stored.setAside || []).filter((a) => !asideIds.has(a.id))];
     const done = new Set([...(r.sheets?.done || []), ...(stored.sheets?.done || [])]);
     r.sheets = { count: Math.max(r.sheets?.count || 1, stored.sheets?.count || 1), done: [...done].sort((x, y) => x - y) };
     // pen markups belong to one photo: a newer photo's markups replace an older photo's, never mix with them
@@ -442,12 +441,13 @@ export async function onIssueUpdated(event) {
   // already refuses its release); the JQL copy says so, so search and dashboards find it
   if (!review) {
     // (only PDFs named as drawing revisions, "BRKT-0142_rev-C.pdf": two invoices on a work item are not a change order)
-    const pdfs = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf' && revisionOfName(a.filename));
+    // (the validator's own reading: two PDFs named as revisions of one drawing, or any two PDFs when none is so named)
+    const { pdfs, conflict } = drawingPdfs(issue.fields.attachment);
     // fewer than two revisions again (one was removed): the "not compared" flag goes too
-    if (pdfs.length < 2) { await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'DELETE' }).catch(() => {}); return; }
+    if (pdfs.length < 2 && !conflict) { await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'DELETE' }).catch(() => {}); return; }
     await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gate: { status: 'blocked', text: 'the two latest drawing revisions have not been compared yet', open: 0 } }),
+      body: JSON.stringify({ gate: { status: 'blocked', text: conflict ? `${conflict} different drawings are attached with revisions` : 'the two latest drawing revisions have not been compared yet', open: 0 } }),
     });
     return;
   }

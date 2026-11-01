@@ -23,7 +23,8 @@ export const noteKey = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 // to mention one of the values the drawing had before. Returns the promised values the drawing is missing.
 export function noteSlip(cloud, noteText) {
   if (!cloud?.before || !cloud?.after || noteText == null) return [];
-  const said = numbersIn(String(noteText).replace(/\b(zones?|sheets?)\s+[A-Z]?\d{1,3}(\s*(,|and|&)\s*[A-Z]?\d{1,3})*/gi, ' '));
+  const text = String(noteText).replace(/\b(zones?|sheets?)\s+[A-Z]?\d{1,3}(\s*(,|and|&)\s*[A-Z]?\d{1,3})*/gi, ' ');
+  const said = [...text.matchAll(/(?:[Ø⌀∅±]\s*|(?<![A-Za-z])[RM]\s?)(\d*[.,]?\d+)|(\d*[.,]?\d+)\s*(?:°|mm\b)/g)].map((m) => parseFloat((m[1] ?? m[2]).replace(',', '.')));
   const before = numbersIn(cloud.before), after = numbersIn(cloud.after);
   if (!said.some((v) => before.includes(v))) return [];
   return [...new Set(said.filter((v) => !before.includes(v) && !after.includes(v)))];
@@ -53,7 +54,8 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   // every sheet of a multi-sheet drawing has to be compared before release
   const unseen = sheets && sheets.count > 1 ? sheets.count - new Set(sheets.done || []).size : 0;
   const needsAck = (!clouds.length && !marks.length) || (extra.setAside || 0) > 0;
-  const unconfirmed = needsAck && !decisions.__ack?.signedBy ? 1 : 0;
+  const ack = decisions.__ack;
+  const unconfirmed = needsAck && (!ack?.signedBy || (ack.asideCount != null && (extra.setAside || 0) > ack.asideCount)) ? 1 : 0;
   const blocked = open + unsigned + rejected + mismatched + markups + unseen + noteChanged + unconfirmed > 0;
   // every reason the release is held, most serious first, so the verdict never hides a second problem
   const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
@@ -94,11 +96,26 @@ export function drawingOf(filename) {
   return m && m[1] ? m[1].toLowerCase().replace(/[-_ .]+$/, '') : null;
 }
 
-export function verdictOf(attachments, review, notes = null) {
-  const pdfs = (attachments || []).filter((a) => a.mimeType === 'application/pdf')
+// The drawing revisions Redline compares on a work item, oldest first. When PDFs are named as revisions of one
+// drawing ("BRKT-0142_rev-C.pdf", "BRKT0142 Rev D.pdf"), those are the revisions and anything else (an ECO form, a
+// test report) is left alone; with no such names, every PDF counts. Two drawings that each have revisions attached
+// are a conflict: Redline compares one drawing per change order.
+export function drawingPdfs(attachments) {
+  const pdfs = (attachments || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''))
     .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
-  const drawings = new Set(pdfs.map((a) => drawingOf(a.filename)).filter(Boolean));
-  if (drawings.size > 1) return { blocked: true, text: `${drawings.size} different drawings are attached; Redline compares one drawing per change order, so raise one change order per drawing` };
+  const groups = new Map();
+  for (const a of pdfs) {
+    const k = drawingOf(a.filename)?.replace(/[^a-z0-9]/g, '');
+    if (k) groups.set(k, [...(groups.get(k) || []), a]);
+  }
+  const withRevs = [...groups.values()].filter((g) => g.length >= 2);
+  if (withRevs.length > 1) return { pdfs: [], conflict: withRevs.length };
+  return { pdfs: withRevs[0] || pdfs };
+}
+
+export function verdictOf(attachments, review, notes = null) {
+  const { pdfs, conflict } = drawingPdfs(attachments);
+  if (conflict) return { blocked: true, text: `${conflict} different drawings are attached with revisions; Redline compares one drawing per change order, so raise one change order per drawing` };
   if (pdfs.length < 2) {
     // a work item that never had two revisions is not a drawing change; one whose reviewed PDF was
     // deleted afterwards must not slip through

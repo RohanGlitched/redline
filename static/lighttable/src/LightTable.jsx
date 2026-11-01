@@ -108,6 +108,7 @@ export default function LightTable() {
         const o = await invoke('getChangeOrder');
         setOrder(o);
         const pdfs = o.attachments;
+        if (o.drawingConflict) { setError(`${o.drawingConflict} different drawings are attached with revisions. Redline compares one drawing per change order: move each drawing's revisions to its own change order.`); return; }
         if (pdfs.length < 2) { setError('Attach two PDF revisions of the drawing to this work item, oldest first.'); return; }
         const [revA, revB] = pdfs.slice(-2);
         if (o.review?.revB?.id === revB.id) {
