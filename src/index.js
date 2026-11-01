@@ -256,6 +256,19 @@ export async function getDrawingReview(payload) {
   return describe(await loadChangeOrder(key));
 }
 
+// The dashboard gadget: blocked change orders with their reason, plus how many are ready to release.
+resolver.define('gadget', async () => {
+  const out = await findBlockedChangeOrders({});
+  const count = async (jql) => {
+    const res = await api.asUser().requestJira(route`/rest/api/3/search/approximate-count`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jql }),
+    });
+    return res.ok ? (await res.json()).count : null;
+  };
+  const [blocked, clear] = await Promise.all([count('redlineGate = "blocked"'), count('redlineGate = "clear"')]);
+  return { ...out, blocked, clear };
+});
+
 export async function findBlockedChangeOrders(payload) {
   const project = payload.projectKey ? ` AND project = "${String(payload.projectKey).replace(/"/g, '')}"` : '';
   const jql = `redlineGate = "blocked"${project} ORDER BY updated DESC`;

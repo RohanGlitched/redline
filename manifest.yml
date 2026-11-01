@@ -7,6 +7,15 @@ modules:
       viewportSize: large
       title: Redline
       icon: resource:main;redline-icon.svg
+  # A dashboard gadget for quality and engineering managers: every change order Redline is holding, and why.
+  jira:dashboardGadget:
+    - key: redline-gadget
+      title: Change orders held by Redline
+      description: Lists change orders whose drawing release is blocked, with the reason, and how many are ready to release.
+      thumbnail: resource:main;redline-icon.svg
+      resource: main
+      resolver:
+        function: resolver
   # Index the review so JQL (and Rovo) can find change orders whose release is blocked.
   jira:entityProperty:
     - key: redline-index

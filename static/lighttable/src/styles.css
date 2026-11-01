@@ -285,3 +285,23 @@ button { font: inherit; color: inherit; }
 .rl-ro { margin: 0 0 4px; padding: 8px 12px; background: var(--rl-sunken); border-left: 3px solid var(--rl-diazo); font-size: 13px; color: var(--rl-subtle); }
 .rl-ledger.readonly .rl-row-act .link, .rl-ledger.readonly .rl-row-act .rl-btn, .rl-ledger.readonly .rl-choices,
 .rl-ledger.readonly .suggest .link, .rl-ledger.readonly .rl-print-add { display: none; }
+
+/* dashboard gadget */
+.rl-gadget { padding: 4px 2px 10px; }
+.rl-gadget .sk { height: 14px; border-radius: 3px; background: var(--rl-sunken); margin: 8px 0; } .rl-gadget .sk.short { width: 60%; }
+.rl-gadget .err { color: var(--rl-danger-text); }
+.rl-gadget-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; margin-bottom: 10px; }
+.rl-gadget-head p { margin: 0; color: var(--rl-subtle); font-size: 13px; }
+.rl-gadget-head b { font: 700 22px var(--rl-letter); color: var(--rl-text); margin-right: 4px; }
+.rl-gadget-head b.blocked { color: var(--rl-danger-text); } .rl-gadget-head b.clear { color: var(--rl-success-text); }
+.rl-gadget-bar { flex: 1 0 100%; display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--rl-sunken); }
+.rl-gadget-bar .blocked { background: var(--rl-red); } .rl-gadget-bar .clear { background: var(--rl-success-text); }
+.rl-gadget-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.rl-gadget-list button { display: grid; grid-template-columns: 64px 1fr; grid-template-areas: "k s" ". w"; gap: 2px 10px; width: 100%; padding: 8px 4px; border: 0; border-bottom: 1px solid var(--rl-border); background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.rl-gadget-list button:hover { background: var(--rl-sunken); }
+.rl-gadget-list button:focus-visible { outline: 2px solid var(--rl-brand); outline-offset: -2px; }
+.rl-gadget-list .key { grid-area: k; font: 700 13px var(--rl-letter); color: var(--rl-diazo); }
+.rl-gadget-list .sum { grid-area: s; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-gadget-list .why { grid-area: w; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--rl-danger-text); }
+.rl-gadget-list .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.rl-gadget-none { margin: 0; color: var(--rl-subtle); }

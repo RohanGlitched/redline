@@ -50,6 +50,14 @@ async function devInvoke(fn, payload = {}) {
     let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
     return { size: buf.length, data: btoa(s) };
   }
+  if (fn === 'gadget') return {
+    jql: 'redlineGate = "blocked" ORDER BY updated DESC', blocked: 3, clear: 5,
+    changeOrders: [
+      { key: 'ENG-3', summary: 'ECO-0151: Motor mount bracket, release rev D', status: 'In review', gate: '2 changes on the drawing are not in the change notes' },
+      { key: 'ENG-4', summary: 'ECO-0207: Gearbox housing, rev A to rev B (3 sheets)', status: 'In review', gate: '1 of 3 sheets is not compared yet' },
+      { key: 'ENG-2', summary: 'ECO-0139: Cover plate, rev B', status: 'Approved', gate: '1 declared change needs a sign-off' },
+    ],
+  };
   if (fn === 'raiseMarkup') return { key: 'ENG-' + (10 + Math.floor(Math.random() * 80)) };
   if (fn === 'saveReview' && new URLSearchParams(location.search).get('readonly') === '1') return { readOnly: true };
   if (fn === 'saveReview') { localStorage.setItem(REVIEW_KEY, JSON.stringify({ ...payload.review, savedAt: new Date().toISOString() })); return { ok: true }; }
@@ -61,7 +69,8 @@ export const invoke = DEV ? devInvoke : async (fn, payload) => (await forgeP).in
 export async function getContext() {
   if (!DEV) return (await forgeP).view.getContext();
   const q = new URLSearchParams(location.search);
-  return { moduleKey: q.get('view') === 'panel' ? 'redline-panel' : 'redline-lighttable', extension: { issue: { key: 'ENG-1' } } };
+  const moduleKey = { panel: 'redline-panel', gadget: 'redline-gadget' }[q.get('view')] || 'redline-lighttable';
+  return { moduleKey, extension: { issue: { key: 'ENG-1' } } };
 }
 
 export async function enableTheme() { if (!DEV) await (await forgeP).view.theme.enable(); }
@@ -77,3 +86,9 @@ export async function openLightTable() {
 }
 
 export async function closeModal() { if (!DEV) (await forgeP).view.close(); }
+
+// Open a work item or a search in Jira (in the dev build, just log it).
+export async function openPath(path) {
+  if (DEV) { console.log('open', path); return; }
+  await (await forgeP).router.navigate(path);
+}
