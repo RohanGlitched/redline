@@ -797,7 +797,7 @@ function Ledger({ earlierMarks = [], res, order, decisions, sel, phase, gate, sh
           ))}
         </ul>
         <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
-        <Carried list={allClouds.filter((c) => c.carried)} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
+        <Carried list={allClouds.filter((c) => c.carried)} decisions={decisions} onDecide={onDecide} onSign={onSign} onSelect={onSelect} readOnly={order.canEdit === false} />
         <SetAside list={aside[res.sheet] || []} showing={showAside} onShow={onShowAside} onCountBack={onCountBack} readOnly={order.canEdit === false} />
         <OtherPdfs list={(order.otherPdfs || []).filter((a) => Date.parse(a.created) > Date.parse(res.revB.created || 0) || +a.id > +res.revB.id)} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <Confirm gate={gate} d={decisions.__ack || {}} asideCount={Object.values(aside || {}).flat().length} revs={[res.revA, res.revB]} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
@@ -966,7 +966,7 @@ function priorDecisions(review, clouds, sheetNo) {
 // shifted. Not counted as changes, but never hidden: each one can be shown on the sheet and counted back in.
 // Changes the previous pair of revisions left open. Each is answered here: this revision fixes it (accepted, then
 // signed), or it is sent back again.
-function Carried({ list, decisions, onDecide, onSign, readOnly }) {
+function Carried({ list, decisions, onDecide, onSign, onSelect, readOnly }) {
   if (!list.length) return null;
   return (
     <div className="rl-confirm rl-carried">
@@ -976,7 +976,7 @@ function Carried({ list, decisions, onDecide, onSign, readOnly }) {
           const d = decisions[c.id] || {};
           return (
             <li key={c.id}>
-              <span><b>{c.n}</b> Zone {c.zone}: {c.carried.was} on {c.carried.from} to {c.carried.to}{c.after ? ` ("${c.after}")` : ''}</span>
+              <span><button className="link" onClick={() => onSelect(c)} aria-label={`Show ${c.n} on the sheet`}><b>{c.n}</b> Zone {c.zone}</button>: {c.carried.was} on {c.carried.from} to {c.carried.to}{c.after ? ` ("${c.after}")` : ''}</span>
               {d.status === 'accepted' ? (d.signedBy ? <em> fixed in this revision, signed by {d.signedBy}</em>
                 : !readOnly && <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>)
                 : d.status === 'rejected' ? <em> sent back again</em>

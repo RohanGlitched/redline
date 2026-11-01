@@ -143,10 +143,10 @@ resolver.define('saveReview', async (req) => {
   const base = req.payload.baseVersion || 0;
   if (stored && (stored.version || 0) !== base) return { conflict: true, review: stored };
   const r = req.payload.review, now = new Date().toISOString();
-  // a review is always of the two newest PDF revisions on the work item, named by id
+  // a review is always of the pair the gate expects (the last reviewed revision against the newest), named by id
   const { pdfs } = drawingPdfs(issue.fields.attachment);
   const [newA, newB] = pairOf(pdfs, stored);
-  if (!newA || !newB || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'This review is not of the two newest drawing revisions. Reopen the light table to compare them.' };
+  if (!newA || !newB || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'A newer drawing revision has arrived since this light table opened. Reopen it to compare the revisions Redline now expects.' };
   if (r.engine !== ENGINE_VERSION) return { stale: true, error: 'This light table is out of date. Close it and open it again to load the current version of Redline.' };
   // A re-read is a review from this exact engine version replacing one from an older version: its changes
   // are found afresh, and each earlier decision belongs to the new change in the same place on the sheet.
@@ -174,6 +174,11 @@ resolver.define('saveReview', async (req) => {
   // A re-read (above) replaces the old changes with the ones the current engine found, and the audit log says so.
   // what the previous pair of revisions left open comes along, whatever the browser sent
   if (!sameRevs && stored) {
+    const mids = new Set((r.marks || []).map((m) => m.id));
+    const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
+    const open = (stored.marks || []).filter((m) => !mids.has(m.id) && !['raised', 'covered', 'dismissed'].includes(stored.markDecisions?.[m.id]?.status) && stillAttached(photoOf(m)));
+    r.marks = [...(r.marks || []), ...open];
+    r.markDecisions = { ...Object.fromEntries(open.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v)), ...(r.markDecisions || {}) };
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []), ...carriedChanges(stored, r.revA).filter((c) => !ids.has(c.id))];
     r.notesDone = notesDoneBefore(stored, r.revA);
@@ -342,7 +347,8 @@ function describe(o) {
         change: c.n, zone: c.zone, kind: c.kind,
         drawingTextBefore: c.before || undefined, drawingTextAfter: c.after || undefined,
         whatChanged: meaningOf(c.before, c.after).map((m) => m.text).join('; ') || undefined,
-        status: d.status === 'declared' ? (note ? `declared in note ${d.note}` : `declared in note ${d.note}, which is no longer in the description`) : d.status === 'accepted' ? 'accepted as a drawing correction' : d.status === 'rejected' ? 'sent back to the drafter' : 'not in the change notes',
+        status: c.carried ? (d.status === 'accepted' ? `left open on ${c.carried.from} to ${c.carried.to}, fixed in this revision${d.signedBy ? `, signed by ${d.signedBy}` : ', not signed yet'}` : d.status === 'rejected' ? `left open on ${c.carried.from} to ${c.carried.to}, sent back again` : `left open on ${c.carried.from} to ${c.carried.to} (${c.carried.was}), not confirmed fixed`)
+          : d.status === 'declared' ? (note ? `declared in note ${d.note}` : `declared in note ${d.note}, which is no longer in the description`) : d.status === 'accepted' ? 'accepted as a drawing correction' : d.status === 'rejected' ? 'sent back to the drafter' : 'not in the change notes',
         valueCheck: slip.length ? (d.valueOk ? `drawing value ${slip.join(', ')} differs from the note; confirmed as right by ${d.valueOk.by}` : `drawing value ${slip.join(', ')} is not what note ${d.note} says`)
           : promised.length ? (d.valueOk ? `note ${d.note} says ${promised.join(', ')}, which the drawing does not show; confirmed as right by ${d.valueOk.by}` : `note ${d.note} says ${promised.join(', ')}, which the drawing does not show`) : undefined,
         signedOffBy: d.signedBy || null,
@@ -452,7 +458,7 @@ export async function onIssueUpdated(event) {
     if ((pdfs.length < 2 || !named) && !conflict) { await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'DELETE' }).catch(() => {}); return; }
     await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gate: { status: 'blocked', text: conflict ? `${conflict} different drawings are attached with revisions` : 'the two latest drawing revisions have not been compared yet', open: 0 } }),
+      body: JSON.stringify({ gate: { status: 'blocked', text: conflict ? `${conflict} different drawings are attached with revisions` : 'the drawing revisions have not been compared yet', open: 0 } }),
     });
     return;
   }

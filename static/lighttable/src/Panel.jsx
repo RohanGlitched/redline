@@ -105,7 +105,7 @@ export default function Panel() {
                   ? [<li key={`h${sh}`} className="sheet-head">Sheet {sh}</li>] : [];
                 const slip = d.status === 'declared' && !valueOkFor(d, o.notes?.find((n) => n.n === d.note)) && slipOf(c, o.notes?.find((n) => n.n === d.note)?.text);
                 const st = slip ? 'undeclared' : cloudStatus(d);
-                const label = d.status === 'rejected' ? 'Sent back' : slip ? valueLabel(c, d, o.notes?.find((n) => n.n === d.note)) : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
+                const label = c.carried ? (d.status === 'accepted' ? `Fixed (left open on ${c.carried.to})` : d.status === 'rejected' ? 'Sent back again' : `Left open on ${c.carried.to}`) : d.status === 'rejected' ? 'Sent back' : slip ? valueLabel(c, d, o.notes?.find((n) => n.n === d.note)) : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
                 return [...head, (
                   <li key={c.id} className={st}>
                     <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Change ${c.n}, zone ${c.zone}: ${label}${d.signedBy ? `, signed off by ${d.signedBy}` : ''}. Open it in the light table`}>

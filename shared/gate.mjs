@@ -146,7 +146,7 @@ export function verdictOf(attachments, review, notes = null) {
     // deleted afterwards must not slip through
     return review ? { blocked: true, text: 'a reviewed drawing revision was removed from the work item' } : { blocked: false, none: true };
   }
-  if (!review) return { blocked: true, text: 'the two latest drawing revisions have not been compared yet' };
+  if (!review) return { blocked: true, text: 'the drawing revisions have not been compared yet' };
   const reviewedB = (attachments || []).find((a) => +a.id === +review.revB?.id);
   const unplaced = reviewedB ? (attachments || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''))
     && !pdfs.some((p) => +p.id === +a.id) && (Date.parse(a.created) > Date.parse(reviewedB.created) || +a.id > +reviewedB.id)

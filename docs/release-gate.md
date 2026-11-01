@@ -33,7 +33,7 @@ Try it on a test work item: attach two PDF revisions where the newer one has a c
 Redline keeps each review in the app's own storage, which only Redline writes. When the transition runs, the validator:
 
 - reads that review, never the issue property;
-- checks that the review compared the two newest PDFs on the work item, so a revision attached afterwards, or a reviewed revision deleted afterwards, blocks release again;
+- checks that the review compared the last reviewed revision against the newest PDF revision on the work item, so a revision attached afterwards, or a reviewed revision deleted afterwards, blocks release again;
 - works out the verdict again from the saved decisions;
 - refuses the transition if Jira cannot tell it what is attached, rather than letting it through.
 

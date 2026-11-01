@@ -382,3 +382,6 @@ button { font: inherit; color: inherit; }
 /* on the marked-up print the machinist's marks lead; the drawing's clouds step back */
 .rl-stage.mode-print .rl-cloud:not(.sel) > path { opacity: 0.45; }
 .rl-stage.mode-print .rl-cloud:not(.sel) .tag { opacity: 0.6; }
+
+/* changes left open on the previous revisions: a quiet amber band, apart from this pair's own changes */
+.rl-carried { border-style: solid; border-color: color-mix(in srgb, #d99a1c 55%, transparent); background: color-mix(in srgb, #d99a1c 8%, transparent); }
