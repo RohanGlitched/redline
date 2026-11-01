@@ -45,6 +45,10 @@ A note claims a change outright only when that change is the only one in the zon
 
 The engine is plain JavaScript with no dependencies: [`static/lighttable/src/engine/`](static/lighttable/src/engine/).
 
+## On real drawings
+
+We ran Redline on drawings nobody prepared for it: 27 consecutive revisions of five SparkFun open-hardware boards, taken from their GitHub history, with each commit message standing in for the change notes. In the 9 pairs we inspected cloud by cloud, Redline marked 25 content changes (a jumper, a test point, a pin, renamed nets, swapped connectors). **The commit messages describe 3 of them.** The run also taught the engine to set aside re-plot shifts and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
+
 ## Measured on a benchmark
 
 On 352 revision pairs we built from public-domain NIST test drawings, with edits we planted at the PDF level (so these numbers show how the engine behaves, not how often real drafters slip):
