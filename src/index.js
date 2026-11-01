@@ -446,9 +446,10 @@ export async function onIssueUpdated(event) {
   if (!review) {
     // (only PDFs named as drawing revisions, "BRKT-0142_rev-C.pdf": two invoices on a work item are not a change order)
     // (the validator's own reading: two PDFs named as revisions of one drawing, or any two PDFs when none is so named)
-    const { pdfs, conflict } = drawingPdfs(issue.fields.attachment);
-    // fewer than two revisions again (one was removed): the "not compared" flag goes too
-    if (pdfs.length < 2 && !conflict) { await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'DELETE' }).catch(() => {}); return; }
+    const { pdfs, conflict, named } = drawingPdfs(issue.fields.attachment);
+    // only PDFs named as one drawing's revisions mark a work item for search: two invoices on an HR ticket do not
+    // (the validator still refuses an uncompared pair on a transition it guards); fewer than two drops the flag too
+    if ((pdfs.length < 2 || !named) && !conflict) { await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'DELETE' }).catch(() => {}); return; }
     await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ gate: { status: 'blocked', text: conflict ? `${conflict} different drawings are attached with revisions` : 'the two latest drawing revisions have not been compared yet', open: 0 } }),

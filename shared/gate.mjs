@@ -54,9 +54,9 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   // every sheet of a multi-sheet drawing has to be compared before release
   const unseen = sheets && sheets.count > 1 ? sheets.count - new Set(sheets.done || []).size : 0;
   // every numbered note is carried out on the drawing, or a named person says it needs no drawing change
-  const unmet = notes && clouds.length && (!sheets || sheets.count <= 1 || new Set(sheets.done || []).size >= sheets.count)
+  const unmet = notes?.length && (!sheets || sheets.count <= 1 || new Set(sheets.done || []).size >= sheets.count)
     ? notes.filter((nt) => !clouds.some((c) => decisions[c.id]?.status === 'declared' && decisions[c.id]?.note === nt.n) && !decisions[`note${nt.n}`]?.signedBy).length : 0;
-  const needsAck = (!clouds.length && !marks.length) || (extra.setAside || 0) > 0;
+  const needsAck = !clouds.length || (extra.setAside || 0) > 0;
   const ack = decisions.__ack;
   const unconfirmed = needsAck && (!ack?.signedBy || (ack.asideCount != null && (extra.setAside || 0) > ack.asideCount)) ? 1 : 0;
   const blocked = open + unsigned + rejected + mismatched + markups + unseen + noteChanged + unconfirmed + unmet > 0;
@@ -70,11 +70,11 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     markups && `${n(markups, 'pen markup on the print needs', 'pen markups on the print need')} an answer`,
     noteChanged && `${n(noteChanged, 'change note was', 'change notes were')} edited after the sign-off`,
     unsigned && `${n(unsigned, 'declared change needs', 'declared changes need')} a sign-off`,
-    unconfirmed && (!clouds.length && !marks.length ? 'nobody has confirmed that the revisions show no differences' : 'nobody has confirmed what Redline set aside as re-plot shifts'),
+    unconfirmed && (!clouds.length ? 'nobody has confirmed that the revisions show no differences' : 'nobody has confirmed what Redline set aside as re-plot shifts'),
     unmet && `${n(unmet, 'change note has', 'change notes have')} no change on the drawing`,
   ].filter(Boolean);
   const text = parts.length ? parts.join('; ')
-    : !clouds.length && !marks.length ? 'No differences found between the revisions'
+    : !clouds.length ? `No differences found between the revisions, confirmed by ${decisions.__ack?.signedBy || 'a reviewer'}`
     : clouds.length === 1 ? 'The change is declared and signed off' : `All ${clouds.length} changes declared and signed off`;
   // the same reasons, short, for places with little room (the light table's header)
   const reasons = [
@@ -85,7 +85,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     markups && { kind: 'markups', n: markups, short: `${markups} pen ${markups === 1 ? 'markup' : 'markups'} to answer` },
     noteChanged && { kind: 'noteChanged', n: noteChanged, short: `${noteChanged} ${noteChanged === 1 ? 'note' : 'notes'} edited since signed` },
     unsigned && { kind: 'unsigned', n: unsigned, short: `${unsigned} to sign off` },
-    unconfirmed && { kind: 'ack', n: 1, short: !clouds.length && !marks.length ? 'confirm no differences' : 'confirm what was set aside' },
+    unconfirmed && { kind: 'ack', n: 1, short: !clouds.length ? 'confirm no differences' : 'confirm what was set aside' },
     unmet && { kind: 'unmet', n: unmet, short: `${unmet} ${unmet === 1 ? 'note' : 'notes'} not on the drawing` },
   ].filter(Boolean);
   return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, noteChanged, unconfirmed, unmet, text, parts, reasons };
@@ -97,7 +97,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
 export function drawingOf(filename) {
   const base = String(filename || '').replace(/\.[a-z0-9]+$/i, '');
   // (the same strict reading as revision names: "review" or "revs" are not a revision)
-  const m = /^(.*?)[-_ .]*(?<![A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*(?:[A-Z]{1,2}|\d{1,3})$/.exec(base);
+  const m = /^(.*?)[-_ .]*(?<![A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*(?:[A-Z]{1,2}|\d{1,3})(?:[-_ ][a-z]+)?$/.exec(base);
   return m && m[1] ? m[1].toLowerCase().replace(/[-_ .]+$/, '') : null;
 }
 
@@ -115,7 +115,7 @@ export function drawingPdfs(attachments) {
   }
   const withRevs = [...groups.values()].filter((g) => g.length >= 2);
   if (withRevs.length > 1) return { pdfs: [], conflict: withRevs.length };
-  return { pdfs: withRevs[0] || pdfs };
+  return withRevs[0] ? { pdfs: withRevs[0], named: true } : { pdfs, named: false };
 }
 
 export function verdictOf(attachments, review, notes = null) {

@@ -35,7 +35,7 @@ test('a sent-back change blocks', () => {
 test('an unanswered pen markup blocks, an answered one does not', () => {
   const marks = [{ id: 'm1' }];
   assert.equal(gateOf([], {}, marks, {}).blocked, true);
-  assert.equal(gateOf([], {}, marks, { m1: { status: 'dismissed' } }).blocked, false);
+  assert.equal(gateOf([], { __ack: { status: 'ack', signedBy: 'Asha' } }, marks, { m1: { status: 'dismissed' } }).blocked, false);
 });
 
 test('a multi-sheet drawing blocks until every sheet is compared', () => {
@@ -342,4 +342,20 @@ test('a change note nothing on the drawing carries out holds the release until s
   assert.equal(g.unmet, 1);
   assert.equal(g.blocked, true);
   assert.equal(gateOf(c, { ...d, note2: { status: 'nochange', signedBy: 'Asha' } }, [], {}, null, notes).blocked, false);
+});
+
+test('no change on the drawing: notes still have to be carried out, and someone confirms by name, whatever the photo shows', () => {
+  const notes = [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.5' }];
+  const marks = [{ id: 'm1' }], md = { m1: { status: 'dismissed' } };
+  const g = gateOf([], {}, marks, md, null, notes);
+  assert.equal(g.blocked, true);
+  assert.equal(g.unmet, 1);
+  assert.equal(g.unconfirmed, 1);
+  const ok = gateOf([], { __ack: { status: 'ack', signedBy: 'Asha' }, note1: { status: 'nochange', signedBy: 'Asha' } }, marks, md, null, notes);
+  assert.equal(ok.blocked, false);
+  assert.match(ok.text, /confirmed by Asha/);
+});
+
+test('revision names may carry a short suffix', () => {
+  assert.equal(drawingOf('BRKT-0142 rev D-signed.pdf'), 'brkt-0142');
 });

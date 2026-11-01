@@ -372,3 +372,4 @@ button { font: inherit; color: inherit; }
 .rl-confirm b { color: var(--rl-text); }
 /* while a drawing change is selected, the pen markups step back so the change reads first */
 .rl-mark.faded ellipse { opacity: 0.18; transition: opacity .2s; } .rl-mark.faded .tag { opacity: 0.4; }
+.rl-simulated { position: absolute; left: 12px; bottom: 12px; font: 600 12px var(--rl-font); color: var(--rl-graphite); background: rgba(255, 255, 255, 0.88); padding: 3px 9px; border-radius: 3px; }

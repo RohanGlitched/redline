@@ -1,7 +1,7 @@
 // The issue panel: the release gate in one sentence, the changes by zone, and the way into the light table.
 import { useEffect, useState } from 'react';
 import { invoke, openLightTable } from './bridge.js';
-import { gateOf, valueSlip, slipOf, valueOkFor } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip, noteSlip, slipOf, valueOkFor } from '../../../shared/gate.mjs';
 import { cloudPath } from './cloud.js';
 
 export default function Panel() {
@@ -105,7 +105,7 @@ export default function Panel() {
                   ? [<li key={`h${sh}`} className="sheet-head">Sheet {sh}</li>] : [];
                 const slip = d.status === 'declared' && !valueOkFor(d, o.notes?.find((n) => n.n === d.note)) && slipOf(c, o.notes?.find((n) => n.n === d.note)?.text);
                 const st = slip ? 'undeclared' : cloudStatus(d);
-                const label = d.status === 'rejected' ? 'Sent back' : slip ? `Value not in note ${d.note}` : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
+                const label = d.status === 'rejected' ? 'Sent back' : slip ? valueLabel(c, d, o.notes?.find((n) => n.n === d.note)) : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
                 return [...head, (
                   <li key={c.id} className={st}>
                     <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Change ${c.n}, zone ${c.zone}: ${label}${d.signedBy ? `, signed off by ${d.signedBy}` : ''}. Open it in the light table`}>
@@ -133,6 +133,13 @@ export default function Panel() {
 // a declared change whose drawing value its note does not state is drawn as needing attention
 const shownStatus = (c, d, notes) => (d.status === 'declared' && !valueOkFor(d, notes?.find((n) => n.n === d.note)) && slipOf(c, notes?.find((n) => n.n === d.note)?.text) ? 'undeclared' : cloudStatus(d));
 const cloudStatus = (d) => (d.status === 'rejected' ? 'rejected' : d.status === 'declared' || d.status === 'accepted' ? (d.signedBy ? 'signed' : 'declared') : 'undeclared');
+
+// The same sentence as the light table: what the note says against what the drawing says.
+const valueLabel = (c, d, note) => {
+  const slip = valueSlip(c, note?.text), promised = noteSlip(c, note?.text);
+  return slip.length && promised.length ? `Note ${d.note} says ${promised.join(', ')}; drawing says ${slip.join(', ')}`
+    : slip.length ? `Drawing says ${slip.join(', ')}; note ${d.note} does not` : `Note ${d.note} says ${promised.join(', ')}; drawing does not`;
+};
 
 // Revision B of one sheet, as a diazo print, with every change clouded in the colour of its decision.
 function Thumb({ t, clouds, decisions, notes, label, onOpen }) {

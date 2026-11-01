@@ -356,8 +356,10 @@ export default function LightTable() {
   const flyTo = useCallback((c) => {
     if (!stageRef.current || !c) return;
     const r = stageRef.current.getBoundingClientRect();
-    const bw = c.x1 - c.x0 + 160, bh = c.y1 - c.y0 + 160;
-    const s = Math.min(3.2, Math.min(r.width / bw, r.height / bh));
+    // a text edit is read in context: more margin, less zoom, so both values and their callout show
+    const text = c.before != null || c.after != null, pad = text ? 320 : 160;
+    const bw = c.x1 - c.x0 + pad, bh = c.y1 - c.y0 + pad;
+    const s = Math.min(text ? 2 : 3.2, Math.min(r.width / bw, r.height / bh));
     const target = { s, x: r.width / 2 - ((c.x0 + c.x1) / 2) * s, y: r.height / 2 - ((c.y0 + c.y1) / 2) * s };
     animateCam(camRef.current, target, setCam);
   }, []);
@@ -530,6 +532,7 @@ export default function LightTable() {
             )}
             <div className="rl-sweep" aria-hidden="true" />
             <Zoom cam={cam} />
+            {mode === 'print' && /_print-photo\.jpg$/.test(print?.att?.filename || '') && <div className="rl-simulated">Sample: simulated photo of a marked-up print</div>}
           </div>
         </section>
         <Ledger res={res} order={order} decisions={decisions} sel={sel} phase={phase} gate={gate}
@@ -709,7 +712,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
                   {!linked.length && !away && (decisions[`note${n.n}`]?.signedBy
                     ? <em>No drawing change needed, said {decisions[`note${n.n}`].signedBy}{order.canEdit !== false && <> <button className="link" onClick={() => onDecide(`note${n.n}`, { status: null, signedBy: null, signedAt: null })}>Undo</button></>}</em>
                     : <><em>{sheets.count > 1 ? 'No change found on this sheet' : 'No change on the sheet'}</em>
-                      {order.canEdit !== false && <button className="rl-goto" onClick={() => { onDecide(`note${n.n}`, { status: 'nochange' }); onSign(`note${n.n}`); }}>Needs no drawing change: sign</button>}</>)}
+                      {order.canEdit !== false && <button className="rl-goto" onClick={() => { onDecide(`note${n.n}`, { status: 'nochange' }); onSign(`note${n.n}`); }}>Sign: no drawing change needed</button>}</>)}
                 </span>
               </li>
             );
