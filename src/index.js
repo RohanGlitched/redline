@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { gateOf, verdictOf } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 export { verdictOf, notesFromAdf };
@@ -157,7 +157,16 @@ resolver.define('saveReview', async (req) => {
     r.marks = [...(r.marks || []), ...(stored.marks || []).filter((m) => !mids.has(m.id))];
   }
   const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes);
-  const review = { ...r, gate, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
+  // who answered each pen markup, and who set a photo aside, as Jira names them
+  for (const [id, m] of Object.entries(r.markDecisions || {})) {
+    const was = stored?.markDecisions?.[id];
+    if (m.status && m.status !== 'open' && was?.status === m.status) { m.by = was.by; m.byId = was.byId; m.at = was.at; }
+    else if (m.status && m.status !== 'open') { m.by = me.displayName; m.byId = me.accountId; m.at = now; }
+  }
+  if (r.print?.setAside) r.print = +stored?.print?.id === +r.print.id && stored.print.setAside ? stored.print : { ...r.print, by: me.displayName, byId: me.accountId, at: now };
+  // "held since": when this review's gate last went from clear (or new) to blocked
+  const heldSince = gate.blocked ? (stored?.gate?.status === 'blocked' && stored.heldSince ? stored.heldSince : now) : null;
+  const review = { ...r, gate, heldSince, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
   await kvs.set(reviewKey(issue.id), review);
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   const audit = (await kvs.get(auditKey(issue.id))) || [];
@@ -245,7 +254,9 @@ export async function releaseGate(event) {
 function describe(o) {
   const r = o.review;
   const latest = o.attachments[o.attachments.length - 1];
-  if (o.attachments.length < 2) return { key: o.key, state: 'no-revisions', message: 'Fewer than two PDF revisions are attached.' };
+  if (o.attachments.length < 2) return o.review
+    ? { key: o.key, state: 'blocked', gate: o.verdict?.text, message: 'A reviewed drawing revision was removed from the work item, so release is blocked.' }
+    : { key: o.key, state: 'no-revisions', message: 'Fewer than two PDF revisions are attached.' };
   if (!r) return { key: o.key, state: 'not-compared', message: `Revisions ${o.attachments.at(-2).filename} and ${latest.filename} have not been compared in Redline yet.` };
   const stale = r.revB?.id !== latest.id;
   return {
@@ -257,11 +268,19 @@ function describe(o) {
     notes: o.notes,
     changes: (r.clouds || []).map((c) => {
       const d = r.decisions?.[c.id] || {};
+      const note = o.notes.find((n) => n.n === d.note);
+      const slip = d.status === 'declared' ? valueSlip(c, note?.text) : [];
       return {
         change: c.n, zone: c.zone, kind: c.kind,
-        status: d.status === 'declared' ? `declared in note ${d.note}` : d.status === 'accepted' ? 'accepted as a drawing correction' : d.status === 'rejected' ? 'sent back to the drafter' : 'not in the change notes',
+        drawingTextBefore: c.before || undefined, drawingTextAfter: c.after || undefined,
+        status: d.status === 'declared' ? (note ? `declared in note ${d.note}` : `declared in note ${d.note}, which is no longer in the description`) : d.status === 'accepted' ? 'accepted as a drawing correction' : d.status === 'rejected' ? 'sent back to the drafter' : 'not in the change notes',
+        valueCheck: slip.length ? (d.valueOk ? `drawing value ${slip.join(', ')} differs from the note; confirmed as right by ${d.valueOk.by}` : `drawing value ${slip.join(', ')} is not what note ${d.note} says`) : undefined,
         signedOffBy: d.signedBy || null,
       };
+    }),
+    penMarkups: (r.marks || []).map((m) => {
+      const md = r.markDecisions?.[m.id] || {};
+      return { markup: `P${m.n}`, zone: m.zone, answer: md.status && md.status !== 'open' ? `${md.status}${md.key ? ` as ${md.key}` : ''}${md.by ? ` by ${md.by}` : ''}` : 'not answered' };
     }),
   };
 }
@@ -277,13 +296,13 @@ export async function getDrawingReview(payload) {
 async function reviewedChangeOrders(projectKey) {
   // every review Redline has stored, found by key in app storage (deleting or editing the issue property
   // cannot hide a change order from this list)
-  const ids = [];
+  const ids = [], stored = new Map();
   for (let cursor; ;) {
     let q = kvs.query().where('key', WhereConditions.beginsWith('review:')).limit(100);
     if (cursor) q = q.cursor(cursor);
     const page = await q.getMany();
-    ids.push(...page.results.map((x) => x.key.slice('review:'.length)));
-    if (!page.nextCursor || ids.length >= 500) break;
+    for (const x of page.results) { const id = x.key.slice('review:'.length); ids.push(id); stored.set(id, x.value); }
+    if (!page.nextCursor || ids.length >= 2000) break;
     cursor = page.nextCursor;
   }
   if (!ids.length) return { items: [] };
@@ -295,12 +314,15 @@ async function reviewedChangeOrders(projectKey) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jql, maxResults: 100, fields: ['summary', 'status', 'attachment', 'description'] }),
     });
-    if (!res.ok) return { error: `Search failed (${res.status}).` };
-    const issues = (await res.json()).issues || [];
-    const reviews = await Promise.all(issues.map((i) => kvs.get(reviewKey(i.id))));
+    // a chunk Jira refuses (one id deleted or hidden from this user) is read issue by issue instead
+    const issues = res.ok ? (await res.json()).issues || [] : (await Promise.all(ids.slice(k, k + 100).map(async (id) => {
+      const one = await api.asUser().requestJira(route`/rest/api/3/issue/${id}?fields=summary,status,attachment,description`);
+      return one.ok ? one.json() : null;
+    }))).filter(Boolean).filter((i) => !projectKey || i.key.startsWith(`${String(projectKey).toUpperCase()}-`));
+    const reviews = issues.map((i) => stored.get(String(i.id)));
     issues.forEach((i, n) => {
       const v = verdictOf(i.fields.attachment, reviews[n], notesFromAdf(i.fields.description));
-      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text, since: reviews[n]?.savedAt });
+      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text, since: reviews[n]?.heldSince || reviews[n]?.savedAt });
     });
   }
   return { items };
@@ -318,4 +340,22 @@ export async function findBlockedChangeOrders(payload) {
   const r = await reviewedChangeOrders(payload?.projectKey);
   if (r.error) return r;
   return { changeOrders: r.items.filter((x) => x.blocked).slice(0, 20).map(({ blocked, ...x }) => x) };
+}
+
+// When a drawing, a photo or the change notes change on a reviewed work item, refresh the searchable copy
+// of the verdict, so JQL never shows "clear" for a change order the validator would refuse.
+export async function onIssueUpdated(event) {
+  const fields = (event.changelog?.items || []).map((i) => String(i.field || '').toLowerCase());
+  if (!fields.some((f) => f === 'attachment' || f === 'description')) return;
+  const id = event.issue?.id;
+  const review = id && (await kvs.get(reviewKey(id)));
+  if (!review) return;
+  const res = await api.asApp().requestJira(route`/rest/api/3/issue/${id}?fields=attachment,description`);
+  if (!res.ok) return;
+  const issue = await res.json();
+  const v = verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description));
+  await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gate: { status: v.blocked ? 'blocked' : 'clear', text: v.text, open: v.open || 0 }, revB: review.revB, version: review.version }),
+  });
 }

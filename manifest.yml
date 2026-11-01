@@ -73,7 +73,15 @@ modules:
           type: string
           required: false
           description: Limit the search to this project key, for example ENG.
+  # Keep the JQL copy of the verdict current when drawings, photos or change notes change.
+  trigger:
+    - key: redline-refresh-index
+      function: onIssueUpdated
+      events:
+        - avi:jira:updated:issue
   function:
+    - key: onIssueUpdated
+      handler: index.onIssueUpdated
     - key: resolver
       handler: index.handler
     - key: getDrawingReview

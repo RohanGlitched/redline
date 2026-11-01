@@ -208,7 +208,8 @@ export default function LightTable() {
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => gateOf(allClouds, decisions, marks, markDecisions, sheetInfo, order?.notes), [allClouds, decisions, marks, markDecisions, sheets, order]);
   useEffect(() => {
-    if (!res || !Object.keys(decisions).length) return;
+    // a comparison that found nothing is a review too: it is saved so the release can go ahead
+    if (!res) return;
     if (readOnly) { setSaved('View only'); return; }
     const t = setTimeout(async () => {
       setSaved('Saving');
