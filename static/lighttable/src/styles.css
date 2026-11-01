@@ -318,7 +318,7 @@ button { font: inherit; color: inherit; }
 .rl-needs .what { display: block; font-size: 12px; color: var(--rl-subtle); font-weight: 400; }
 
 /* each change in the issue panel opens the light table on it */
-.rl-panel-list li > button { display: contents; font: inherit; color: inherit; cursor: pointer; }
+.rl-panel-list li > button { display: contents; font: inherit; color: inherit; cursor: pointer; text-align: left; }
 .rl-panel-list li:has(> button) { cursor: pointer; }
 .rl-panel-list li:has(> button:hover) { background: var(--rl-sunken); }
 .rl-panel-list li:has(> button:focus-visible) { outline: 2px solid var(--rl-brand); outline-offset: -2px; }

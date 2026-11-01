@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { invoke, openLightTable } from './bridge.js';
 import { gateOf } from './LightTable.jsx';
+import { valueSlip } from '../../../shared/gate.mjs';
 import { cloudPath } from './cloud.js';
 
 export default function Panel() {
@@ -86,8 +87,9 @@ export default function Panel() {
                 const sh = c.sheet || 1;
                 const head = multi && sh !== (r.clouds[i - 1]?.sheet || 1) || (multi && i === 0)
                   ? [<li key={`h${sh}`} className="sheet-head">Sheet {sh}</li>] : [];
-                const st = cloudStatus(d);
-                const label = d.status === 'rejected' ? 'Sent back' : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : 'Not in notes';
+                const slip = d.status === 'declared' && !d.valueOk && valueSlip(c, o.notes?.find((n) => n.n === d.note)?.text).length;
+                const st = slip ? 'undeclared' : cloudStatus(d);
+                const label = d.status === 'rejected' ? 'Sent back' : slip ? `Value not in note ${d.note}` : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : 'Not in notes';
                 return [...head, (
                   <li key={c.id} className={st}>
                     <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Open change ${c.n} in the light table`}>
