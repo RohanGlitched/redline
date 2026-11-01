@@ -2,7 +2,7 @@
 
 Redline adds a workflow validator called **Redline drawing release gate**. Put it on the transition that releases a drawing, for example *Approved → Released*. When someone tries that transition, Jira refuses it and shows the reason in the transition dialog until all of these hold:
 
-- the newest two PDF revisions on the work item have been compared in Redline, every sheet of them;
+- the drawing's revisions have been compared in Redline (the last reviewed revision against the newest, in revision order; the first time, the oldest against the newest), every sheet of them;
 - every change Redline found is declared in a numbered change note, or accepted as a correction;
 - every declared change is signed off, and its note still reads as it did when it was signed (a rewritten or renumbered note needs signing again);
 - every declared change's values agree with its note both ways, or someone has confirmed by name that the drawing is right;

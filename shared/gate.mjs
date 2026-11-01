@@ -114,15 +114,28 @@ export function drawingOf(filename) {
 // drawing ("BRKT-0142_rev-C.pdf", "BRKT0142 Rev D.pdf"), those are the revisions and anything else (an ECO form, a
 // test report) is left alone; with no such names, every PDF counts. Two drawings that each have revisions attached
 // are a conflict: Redline compares one drawing per change order.
+// The revision a file name gives, as something to sort by: letters A..Z, AA.. in order, numbers by value, numbers before
+// letters; null when the name has none.
+export function revisionRank(filename) {
+  const base = String(filename || '').replace(/\.[a-z0-9]+$/i, '');
+  const m = /(?<![A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*([A-Za-z]{1,2}|\d{1,3})(\d{0,2})(?:[-_ ]+\(?[A-Za-z0-9]+\)?)*$/.exec(base);
+  if (!m) return null;
+  const t = m[1].toUpperCase(), sub = m[2] ? +m[2] : 0;
+  if (/^\d+$/.test(t)) return +t * 100 + sub;
+  return 100000 + [...t].reduce((v, ch) => v * 27 + (ch.charCodeAt(0) - 64), 0) * 100 + sub;
+}
+
 export function drawingPdfs(attachments) {
-  const pdfs = (attachments || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''))
-    .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
+  const byTime = (x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id;
+  const pdfs = (attachments || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')).sort(byTime);
   const groups = new Map();
   for (const a of pdfs) {
     const k = drawingOf(a.filename)?.replace(/[^a-z0-9]/g, '');
     if (k) groups.set(k, [...(groups.get(k) || []), a]);
   }
-  const withRevs = [...groups.values()].filter((g) => g.length >= 2);
+  // a drawing's revisions go in revision order: rev D attached before rev C is still compared C to D
+  const withRevs = [...groups.values()].filter((g) => g.length >= 2)
+    .map((g) => [...g].sort((x, y) => (revisionRank(x.filename) ?? 0) - (revisionRank(y.filename) ?? 0) || byTime(x, y)));
   if (withRevs.length > 1) return { pdfs: [], conflict: withRevs.length };
   return withRevs[0] ? { pdfs: withRevs[0], named: true } : { pdfs, named: false };
 }
@@ -135,7 +148,8 @@ export function pairOf(pdfs, review) {
   const from = review && pdfs.find((p) => +p.id === +review.revB?.id);
   if (from && +from.id !== +last.id) return [from, last];
   if (review && +review.revB?.id === +last.id) { const a = pdfs.find((p) => +p.id === +review.revA?.id); if (a) return [a, last]; }
-  return pdfs.slice(-2);
+  // the first comparison (or one after the reviewed revision was removed): the oldest against the newest
+  return pdfs.length >= 2 ? [pdfs[0], last] : pdfs.slice(-2);
 }
 
 export function verdictOf(attachments, review, notes = null) {
@@ -153,7 +167,7 @@ export function verdictOf(attachments, review, notes = null) {
     && !review.decisions?.[`pdf${a.id}`]?.signedBy) : [];
   if (unplaced.length) return { blocked: true, text: `${unplaced.map((a) => a.filename).join(', ')} ${unplaced.length === 1 ? 'was' : 'were'} attached after the reviewed revision and is not compared; a new revision should be named like the others so Redline compares it; anything else, set it aside on the light table` };
   const [a, b] = pairOf(pdfs, review);
-  if (+review.revB?.id !== +b.id) return { blocked: true, text: 'a newer drawing revision was attached after the last review' };
+  if (+review.revB?.id !== +b.id) return { blocked: true, text: pdfs.some((p) => +p.id === +review.revB?.id) ? 'a newer drawing revision was attached after the last review' : 'the reviewed drawing revision was removed or replaced; compare the revisions again' };
   if (review.revA?.id && +review.revA.id !== +a.id) return { blocked: true, text: 'the review compared a different pair of revisions' };
   // the newest photo on the work item must be the print the review read (or set aside as not a print)
   const photos = (attachments || []).filter((x) => /^image\/(jpeg|png|webp|heic|heif)$/.test(x.mimeType))

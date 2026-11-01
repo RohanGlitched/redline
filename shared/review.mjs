@@ -1,4 +1,4 @@
-import { noteKey } from './gate.mjs';
+import { noteKey, slipOf, valueOkFor } from './gate.mjs';
 // Rules for saving a review that the browser and the backend share. Pure functions, tested in
 // test/gate.test.mjs.
 
@@ -79,22 +79,43 @@ export function settleSignatures(decisions, { beforeOf, notes = [], signed = [],
 // that review that was sent back or never answered comes along to the D to E review: the drafter may have fixed the
 // value but not the moved hole, and D to E would not show a hole that is in both D and E. A carried change stays open
 // until someone says by name that this revision fixes it, or sends it back again.
-export function carriedChanges(previous, revA) {
-  if (!previous || +previous.revB?.id !== +revA?.id) return [];
-  const open = (c) => { const d = previous.decisions?.[c.id] || {}; return d.status === 'rejected' || !(d.status === 'declared' || d.status === 'accepted'); };
-  return (previous.clouds || []).filter((c) => !c.carried || open(c)).filter(open).map((c, i) => ({
-    ...c, id: `k-${c.id.replace(/^k-/, '')}`, n: `K${i + 1}`, x0: c.box?.[0] ?? c.x0, y0: c.box?.[1] ?? c.y0, x1: c.box?.[2] ?? c.x1, y1: c.box?.[3] ?? c.y1,
-    carried: { from: previous.revA?.filename, to: previous.revB?.filename, was: previous.decisions?.[c.id]?.status === 'rejected' ? 'sent back' : 'not answered' },
-  }));
+// A change the gate had cleared: answered, signed, and (declared) against a note that still reads as signed, with
+// its value agreeing or confirmed. Anything less was still holding the release.
+function settled(c, d, notes) {
+  if (!d?.signedBy) return false;
+  if (d.status === 'accepted') return true;
+  if (d.status !== 'declared') return false;
+  if (!notes) return true;
+  const note = notes.find((n) => n.n === d.note);
+  if (!note) return false;
+  if (d.noteText != null && d.noteText !== noteKey(note.text)) return false;
+  return valueOkFor(d, note) || !slipOf(c, note.text);
 }
 
-// Notes carried out on the previous pair of revisions: declared there, signed, against the same words. A D to E review
-// does not show changes made from C to D, so those notes are done, not missing from the drawing.
-export function notesDoneBefore(previous, revA) {
-  if (!previous || +previous.revB?.id !== +revA?.id) return [];
+export function carriedChanges(previous, revA, notes = null) {
+  if (!previous) return [];
+  const holding = (c) => !settled(c, previous.decisions?.[c.id], notes);
+  return (previous.clouds || []).filter(holding).map((c, i) => {
+    const d = previous.decisions?.[c.id] || {};
+    return {
+      ...c, id: `k-${c.id.replace(/^k-/, '')}`, n: `K${i + 1}`, x0: c.box?.[0] ?? c.x0, y0: c.box?.[1] ?? c.y0, x1: c.box?.[2] ?? c.x1, y1: c.box?.[3] ?? c.y1,
+      carried: { from: c.carried?.from || previous.revA?.filename, to: previous.revB?.filename,
+        was: d.status === 'rejected' ? 'sent back' : !(d.status === 'declared' || d.status === 'accepted') ? 'not answered' : 'not cleared (a sign-off or a value check was missing)' },
+    };
+  });
+}
+
+// Notes carried out before: declared on a change the gate had cleared, or signed off as needing no drawing change,
+// against words that still read so. A later review does not show changes made earlier, so those notes are done.
+export function notesDoneBefore(previous, revA, notes = null) {
+  if (!previous) return [];
   const done = new Map((previous.notesDone || []).map((x) => [x.n, x]));
-  for (const d of Object.values(previous.decisions || {})) {
-    if (d.status === 'declared' && d.signedBy && d.noteText != null) done.set(d.note, { n: d.note, noteText: d.noteText });
+  for (const c of previous.clouds || []) {
+    const d = previous.decisions?.[c.id];
+    if (d?.status === 'declared' && d.noteText != null && settled(c, d, notes)) done.set(d.note, { n: d.note, noteText: d.noteText });
+  }
+  for (const [id, d] of Object.entries(previous.decisions || {})) {
+    if (/^note\d+$/.test(id) && d.signedBy && d.noteText != null) done.set(+id.slice(4), { n: +id.slice(4), noteText: d.noteText });
   }
   return [...done.values()];
 }

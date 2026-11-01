@@ -34,7 +34,7 @@ modules:
   jira:workflowValidator:
     - key: redline-release-gate
       name: Redline drawing release gate
-      description: Blocks the transition until every change between the last two PDF drawing revisions is declared in the change notes and signed off in Redline, and every pen markup on a photographed print is answered.
+      description: Blocks the transition until every change between the drawing revisions compared (the last reviewed one against the newest) is declared in the change notes and signed off in Redline, and every pen markup on a photographed print is answered.
       projectTypes: ['company-managed', 'team-managed']
       function: releaseGateFn
   rovo:agent:

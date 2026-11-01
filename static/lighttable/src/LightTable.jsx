@@ -117,6 +117,10 @@ export default function LightTable() {
           for (const c of o.review.clouds || []) (bySheet[c.sheet || 1] ||= []).push(c);
           setSheets({ count: o.review.sheets?.count || 1, compared: Object.fromEntries((o.review.sheets?.done || []).map((n) => [n, bySheet[n] || []])) });
           if (o.review.markDecisions) setMarkDecisions(o.review.markDecisions);
+        } else if (o.review?.markDecisions) {
+          // a new pair of revisions: pen markups answered before keep their answers (the photo is the same print)
+          const attached = new Set((o.images || []).map((a) => String(a.id)));
+          setMarkDecisions(Object.fromEntries(Object.entries(o.review.markDecisions).filter(([id, d]) => attached.has(/^p(\d+)-/.exec(id)?.[1]) && d?.status && d.status !== 'open')));
         }
         versionRef.current = o.review?.version || 0;
         await loadSheet(o, 1, revA, revB);
@@ -297,7 +301,7 @@ export default function LightTable() {
     const rv = order?.review;
     if (!rv || !res) return [];
     if (+rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id) return (rv.clouds || []).filter((c) => c.carried);
-    return carriedChanges(rv, res.revA);
+    return carriedChanges(rv, res.revA, order.notes);
   }, [order, res?.revA?.id, res?.revB?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [serverGate, setServerGate] = useState(null);
   const allClouds = useMemo(() => [...Object.values(sheets.compared).flat(), ...carried], [sheets, carried]);
@@ -310,7 +314,7 @@ export default function LightTable() {
   const notesDone = useMemo(() => {
     const rv = order?.review;
     if (!rv || !res) return [];
-    return +rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id ? rv.notesDone || [] : notesDoneBefore(rv, res.revA);
+    return +rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id ? rv.notesDone || [] : notesDoneBefore(rv, res.revA, order.notes);
   }, [order, res?.revA?.id, res?.revB?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => {
@@ -984,7 +988,7 @@ function Carried({ list, decisions, onDecide, onSign, onSelect, readOnly }) {
                   <button className="rl-btn quiet" onClick={() => onDecide(c.id, { status: 'accepted' })}>Fixed in this revision</button>
                   <button className="rl-btn quiet" onClick={() => onDecide(c.id, { status: 'rejected' })}>Still wrong: send back</button>
                 </span>}
-              {!readOnly && d.status && <> <button className="link" onClick={() => onDecide(c.id, { status: 'open', signedBy: null, signedAt: null })}>Undo</button></>}
+              {!readOnly && d.status && d.status !== 'open' && <> <button className="link" onClick={() => onDecide(c.id, { status: null, signedBy: null, signedAt: null })}>Undo</button></>}
             </li>
           );
         })}

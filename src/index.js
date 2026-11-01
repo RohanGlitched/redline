@@ -161,7 +161,7 @@ resolver.define('saveReview', async (req) => {
   const stillAttached = (id) => (issue.fields.attachment || []).some((a) => +a.id === +id);
   if (sameRevs && !r.print && stored.print && stillAttached(stored.print.id)) { r.print = stored.print; r.marks = stored.marks || []; r.markDecisions = { ...(stored.markDecisions || {}), ...(r.markDecisions || {}) }; }
   // nothing changed since the last save (the light table saves once when it opens): no write, no audit entry
-  if (sameRevs && !reread && !(req.payload.signed || []).length && !(req.payload.confirmed || []).length && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: stored.gate, decisions: stored.decisions };
+  if (sameRevs && !reread && !(req.payload.signed || []).length && !(req.payload.confirmed || []).length && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: verdictOf(issue.fields.attachment, stored, notes), decisions: stored.decisions };
   const me = await (await jira(route`/rest/api/3/myself`)).json();
   const signed = [];
   // Signatures are never taken from the browser's copy of a decision (shared/review.mjs settleSignatures)
@@ -176,13 +176,20 @@ resolver.define('saveReview', async (req) => {
   if (!sameRevs && stored) {
     const mids = new Set((r.marks || []).map((m) => m.id));
     const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
-    const open = (stored.marks || []).filter((m) => !mids.has(m.id) && !['raised', 'covered', 'dismissed'].includes(stored.markDecisions?.[m.id]?.status) && stillAttached(photoOf(m)));
+    const open = (stored.marks || []).filter((m) => !mids.has(m.id) && stillAttached(photoOf(m)));
     r.marks = [...(r.marks || []), ...open];
-    r.markDecisions = { ...Object.fromEntries(open.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v)), ...(r.markDecisions || {}) };
+    // answers given before stand (a markup raised as ENG-7 is never offered for raising again)
+    const answers = Object.fromEntries((stored.marks || []).filter((m) => stillAttached(photoOf(m))).map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v && v.status !== 'open'));
+    r.markDecisions = { ...(r.markDecisions || {}), ...Object.fromEntries(Object.entries(answers).filter(([id]) => !r.markDecisions?.[id] || r.markDecisions[id].status === 'open')) };
     const ids = new Set((r.clouds || []).map((c) => c.id));
-    r.clouds = [...(r.clouds || []), ...carriedChanges(stored, r.revA).filter((c) => !ids.has(c.id))];
-    r.notesDone = notesDoneBefore(stored, r.revA);
+    r.clouds = [...(r.clouds || []), ...carriedChanges(stored, r.revA, notes).filter((c) => !ids.has(c.id))];
+    r.notesDone = notesDoneBefore(stored, r.revA, notes);
   } else if (sameRevs) r.notesDone = stored.notesDone || [];
+  if (reread) {
+    const ids = new Set((r.clouds || []).map((c) => c.id));
+    r.clouds = [...(r.clouds || []), ...(stored.clouds || []).filter((c) => c.carried && !ids.has(c.id))];
+    r.notesDone = stored.notesDone || [];
+  }
   if (sameRevs && !reread) {
     const was = new Map((stored.clouds || []).map((c) => [c.id, c]));
     const ids = new Set((r.clouds || []).map((c) => c.id));

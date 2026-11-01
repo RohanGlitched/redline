@@ -1,7 +1,7 @@
 // Unit tests for the release verdict and change-note parsing. Run with: npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor, drawingPdfs, pairOf } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor, drawingPdfs, pairOf, revisionRank } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 const pdf = (id, created) => ({ id: String(id), mimeType: 'application/pdf', created });
@@ -370,7 +370,7 @@ test('a PDF attached after the reviewed revision that Redline cannot place holds
 });
 
 // ---------- who signed what (the server's rules) ----------
-import { settleSignatures, carriedChanges } from '../shared/review.mjs';
+import { settleSignatures, carriedChanges, notesDoneBefore } from '../shared/review.mjs';
 const alice = { accountId: 'a', displayName: 'Alice' }, bob = { accountId: 'b', displayName: 'Bob' };
 const notesV1 = [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.5' }], notesV2 = [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.7' }];
 
@@ -440,15 +440,14 @@ test('a change sent back on C to D still holds when revision E arrives, until so
   // the D to E review found nothing new, but the carried change holds
   assert.equal(gateOf(carried, { __ack: { status: 'ack', signedBy: 'Asha' } }).blocked, true);
   assert.equal(gateOf(carried, { 'k-s1-c2': { status: 'accepted', signedBy: 'Asha' } }).blocked, false);
-  // nothing is carried into a pair that does not continue the previous one
-  assert.deepEqual(carriedChanges(previous, { id: 9 }), []);
+
 });
 
 test('two revisions attached at once are compared from the last reviewed one, so none is skipped', () => {
   const p = (id) => ({ id });
   assert.deepEqual(pairOf([p(1), p(2), p(3), p(4)], { revA: { id: 1 }, revB: { id: 2 } }).map((x) => x.id), [2, 4]);
   assert.deepEqual(pairOf([p(1), p(2), p(3), p(4)], { revA: { id: 2 }, revB: { id: 4 } }).map((x) => x.id), [2, 4]);
-  assert.deepEqual(pairOf([p(1), p(2), p(3)], null).map((x) => x.id), [2, 3]);
+  assert.deepEqual(pairOf([p(1), p(2), p(3)], null).map((x) => x.id), [1, 3]); // the first time: oldest against newest
 });
 
 test('a markup holds only while its photo is attached', () => {
@@ -458,4 +457,24 @@ test('a markup holds only while its photo is attached', () => {
   const photo = (id) => ({ id, mimeType: 'image/jpeg', created: `2026-11-02T0${id - 5}:00:00Z` });
   assert.equal(verdictOf([pdf(1, 'X_rev-A.pdf'), pdf(2, 'X_rev-B.pdf'), photo(10), photo(11)], review).blocked, true);
   assert.equal(verdictOf([pdf(1, 'X_rev-A.pdf'), pdf(2, 'X_rev-B.pdf'), photo(11)], review).blocked, false);
+});
+
+test('what the gate was still holding is carried: a value slip nobody confirmed, an accepted change nobody signed', () => {
+  const notes = [{ n: 1, text: 'Zone D2: bore Ø25 to Ø25.5' }];
+  const previous = { revA: { id: 1 }, revB: { id: 2 },
+    clouds: [{ id: 's1-c1', zone: 'D2', before: 'Ø25', after: 'Ø25.6', values: [25.6] }, { id: 's1-c2', zone: 'C3' }, { id: 's1-c3', zone: 'A1' }],
+    decisions: { 's1-c1': { status: 'declared', note: 1, signedBy: 'Asha', noteText: 'Zone D2: bore Ø25 to Ø25.5' }, 's1-c2': { status: 'accepted' }, 's1-c3': { status: 'accepted', signedBy: 'Asha' } } };
+  assert.deepEqual(carriedChanges(previous, { id: 2 }, notes).map((c) => c.id), ['k-s1-c1', 'k-s1-c2']);
+  // the note of a change that never cleared is not done
+  assert.deepEqual(notesDoneBefore(previous, { id: 2 }, notes), []);
+  // "needs no drawing change", signed, is done next time too
+  assert.deepEqual(notesDoneBefore({ decisions: { note2: { status: 'nochange', signedBy: 'Asha', noteText: 'x' } } }, { id: 2 }, notes).map((x) => x.n), [2]);
+});
+
+test('revisions go in revision order, whatever order they were attached in', () => {
+  const pdf = (id, filename, h) => ({ id, filename, mimeType: 'application/pdf', created: `2026-11-02T0${h}:00:00Z` });
+  const { pdfs } = drawingPdfs([pdf(1, 'BRKT_rev-B.pdf', 1), pdf(2, 'BRKT_rev-C.pdf', 2), pdf(3, 'BRKT_rev-E.pdf', 3), pdf(4, 'BRKT_rev-D.pdf', 4)]);
+  assert.deepEqual(pdfs.map((a) => a.id), [1, 2, 4, 3]);
+  assert.ok(revisionRank('X rev 3.pdf') < revisionRank('X rev A.pdf'));
+  assert.ok(revisionRank('X_rev-Z.pdf') < revisionRank('X_rev-AA.pdf'));
 });
