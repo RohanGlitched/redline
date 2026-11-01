@@ -1,9 +1,13 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
+import { kvs } from '@forge/kvs';
+import { gateOf } from '../shared/gate.mjs';
 
-// Redline keeps its review on the work item itself, as an issue property. The release-gate validator,
-// JQL (through the indexed property) and the Rovo actions all read that one record.
+// The review of record lives in the app's own storage, which no user or REST call can edit; the backend
+// recomputes the gate from the saved decisions and stamps every sign-off with the signer's account.
+// A copy of the verdict is written to an issue property only so JQL can search it (`redlineGate`).
 const PROP = 'redline-review';
+const reviewKey = (issueId) => `review:${issueId}`;
 
 // ---------- reading a change order ----------
 
@@ -42,8 +46,7 @@ export async function loadChangeOrder(key) {
   const res = await jira(route`/rest/api/3/issue/${key}?fields=summary,status,description,attachment,project,issuetype`);
   if (res.status === 404) throw new Error(`Work item ${key} was not found or you cannot see it`);
   const issue = await res.json();
-  const prop = await jira(route`/rest/api/3/issue/${key}/properties/${PROP}`);
-  const review = prop.status === 404 ? null : (await prop.json()).value;
+  const review = (await kvs.get(reviewKey(issue.id))) || null;
   const attachments = (issue.fields.attachment || [])
     .filter((a) => a.mimeType === 'application/pdf')
     .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id)
@@ -54,6 +57,7 @@ export async function loadChangeOrder(key) {
     .map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, mimeType: a.mimeType, author: a.author?.displayName }));
   return {
     key: issue.key,
+    id: issue.id,
     project: issue.fields.project?.key,
     issuetype: issue.fields.issuetype?.id,
     images,
@@ -76,22 +80,41 @@ resolver.define('getChangeOrder', async (req) => {
   return { ...o, user: { accountId: me.accountId, displayName: me.displayName } };
 });
 
-// The bridge cannot carry binary bodies, so the resolver fetches the PDF as the user (their
-// permissions apply) and hands it over as base64. Drawings above ~3.5 MB need splitting (5 MB cap).
+// The bridge cannot carry binary bodies, so the resolver fetches the PDF as the user (their permissions
+// apply) and hands it over as base64, in slices that stay under Forge's 5 MB response cap.
+const SLICE = 3_000_000, MAX = 40_000_000;
 resolver.define('getAttachment', async (req) => {
   const res = await jira(route`/rest/api/3/attachment/content/${String(req.payload.id)}`);
   const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length > 3_600_000) throw new Error('This drawing is larger than 3.5 MB; Redline handles drawings up to 3.5 MB today');
-  return { size: buf.length, data: buf.toString('base64') };
+  if (buf.length > MAX) throw new Error(`This file is ${(buf.length / 1e6).toFixed(0)} MB; Redline reads drawings up to 40 MB`);
+  const offset = req.payload.offset || 0;
+  return { size: buf.length, offset, data: buf.subarray(offset, offset + SLICE).toString('base64') };
 });
 
+// Save a review. The browser sends what people decided; the backend checks nobody saved in between,
+// recomputes the gate itself and records who signed each change.
 resolver.define('saveReview', async (req) => {
   const key = issueKey(req);
-  const review = { ...req.payload.review, savedBy: req.context.accountId, savedAt: new Date().toISOString() };
-  await jira(route`/rest/api/3/issue/${key}/properties/${PROP}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(review),
+  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=summary`)).json();
+  const stored = await kvs.get(reviewKey(issue.id));
+  const base = req.payload.baseVersion || 0;
+  if (stored && (stored.version || 0) !== base) return { conflict: true, review: stored };
+  const r = req.payload.review, now = new Date().toISOString();
+  for (const [id, d] of Object.entries(r.decisions || {})) {
+    const before = stored?.decisions?.[id];
+    if (d.signedAt && d.signedAt !== before?.signedAt) { d.signedById = req.context.accountId; d.signedAt = now; }
+    else if (before?.signedById && d.signedAt === before.signedAt) d.signedById = before.signedById;
+    if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
+  }
+  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {});
+  const review = { ...r, gate, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
+  await kvs.set(reviewKey(issue.id), review);
+  // searchable copy for JQL; the validator never reads it
+  await api.asApp().requestJira(route`/rest/api/3/issue/${key}/properties/${PROP}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gate: { status: gate.status, text: gate.text, open: gate.open }, revB: r.revB, version: review.version }),
   });
-  return { ok: true };
+  return { ok: true, version: review.version, gate };
 });
 
 async function attach(key, name, mime, base64) {
@@ -148,6 +171,23 @@ resolver.define('addSample', async (req) => {
 });
 
 export const handler = resolver.getDefinitions();
+
+// ---------- release gate (workflow validator) ----------
+
+// Runs inside the transition. It reads the review from app storage (not the editable issue property),
+// recomputes the verdict, and checks that the review covers the newest PDF revision on the work item.
+export async function releaseGate(event) {
+  const key = event.issue?.key, id = event.issue?.id;
+  const issue = await (await api.asApp().requestJira(route`/rest/api/3/issue/${key || id}?fields=attachment`)).json();
+  const pdfs = (issue.fields?.attachment || []).filter((a) => a.mimeType === 'application/pdf');
+  if (pdfs.length < 2) return { result: true };
+  const review = await kvs.get(reviewKey(issue.id));
+  if (!review) return { result: false, errorMessage: 'Redline: compare the two latest drawing revisions on the light table before release.' };
+  const latest = Math.max(...pdfs.map((a) => +a.id));
+  if (+review.revB?.id !== latest) return { result: false, errorMessage: 'Redline: a newer drawing revision was attached after the last review. Review it on the light table before release.' };
+  const gate = gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {});
+  return gate.blocked ? { result: false, errorMessage: `Redline: ${gate.text}. Resolve them on the light table before release.` } : { result: true };
+}
 
 // ---------- Rovo actions ----------
 

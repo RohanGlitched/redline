@@ -16,9 +16,21 @@ export function zoneOf(c, w, h) {
   return row + col;
 }
 
-export async function loadRevision(invoke, att, dpi) {
-  const r = await invoke('getAttachment', { id: att.id });
-  return renderPage(b64(r.data), 1, dpi);
+// Fetch an attachment's bytes in slices (Forge caps one response at 5 MB).
+export async function fetchBytes(invoke, id) {
+  let first = await invoke('getAttachment', { id, offset: 0 });
+  const out = new Uint8Array(first.size);
+  let off = 0, part = first;
+  for (;;) {
+    const bytes = b64(part.data); out.set(bytes, off); off += bytes.length;
+    if (off >= first.size || !bytes.length) break;
+    part = await invoke('getAttachment', { id, offset: off });
+  }
+  return out;
+}
+
+export async function loadRevision(invoke, att, dpi, page = 1) {
+  return renderPage(await fetchBytes(invoke, att.id), page, dpi);
 }
 
 // The overlay a checker reads on a light table: shared line work in graphite, lines only on rev A in red
@@ -88,14 +100,15 @@ export function downsample(img, k) {
   return { w, h, data: out };
 }
 
-export async function analyse(invoke, revA, revB, notes, onStage = () => {}) {
+export async function analyse(invoke, revA, revB, notes, onStage = () => {}, page = 1) {
   // Render once at display resolution (300 dpi, or 150 dpi for very large sheets) so zooming in stays
   // crisp, and give the engine a 150 dpi copy.
-  const dpi = 150;
   onStage('Reading both revisions');
-  const [hA, hB] = await Promise.all([loadRevision(invoke, revA, 300), loadRevision(invoke, revB, 300)]);
-  const k = hA.w * hA.h > 9e6 ? 1 : 2;
-  const [A, B] = k === 2 ? [downsample(hA, 2), downsample(hB, 2)] : await Promise.all([loadRevision(invoke, revA, dpi), loadRevision(invoke, revB, dpi)]);
+  const [hA, hB] = await Promise.all([loadRevision(invoke, revA, 300, page), loadRevision(invoke, revB, 300, page)]);
+  // the engine works near 150 dpi; small sheets are drawn at 300 dpi and halved, large ones used as drawn
+  const k = Math.max(1, Math.round(hA.dpi / 150));
+  const [A, B] = [downsample(hA, k), downsample(hB, k)];
+  const dpi = Math.round(hA.dpi / k), displayDpi = Math.round(hA.dpi);
   onStage('Lining up the sheets');
   await new Promise((r) => setTimeout(r, 0));
   const t0 = performance.now();
@@ -108,7 +121,7 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}) {
   const clouds = r.clouds
     .sort((p, q) => p.y0 - q.y0 || p.x0 - q.x0)
     .map((c, i) => ({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed, zone: zoneOf(c, A.w, A.h) }));
-  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes), transform: r.transform, ms, dpi, pages: [hA.pages, hB.pages] };
+  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes), transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
 }
 
 // ---------- paper markups ----------
@@ -122,8 +135,7 @@ function rgbaOf(source, w, h) {
 
 // A phone photo of a printed revision, from a Jira attachment (the Jira mobile app attaches photos natively).
 export async function loadPhoto(invoke, att) {
-  const r = await invoke('getAttachment', { id: att.id });
-  const bmp = await createImageBitmap(new Blob([b64(r.data)], { type: att.mimeType || 'image/jpeg' }));
+  const bmp = await createImageBitmap(new Blob([await fetchBytes(invoke, att.id)], { type: att.mimeType || 'image/jpeg' }));
   const k = Math.min(1, 3000 / Math.max(bmp.width, bmp.height));
   return rgbaOf(bmp, Math.round(bmp.width * k), Math.round(bmp.height * k));
 }
@@ -152,8 +164,11 @@ export function readPrint(photo, res) {
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const [bx, by] = apply(p, x, y), ix = Math.round(bx), iy = Math.round(by), o = (y * w + x) * 4;
     if (ix < 0 || iy < 0 || ix >= r.warped.w || iy >= r.warped.h) { out.data[o] = out.data[o + 1] = out.data[o + 2] = out.data[o + 3] = 255; continue; }
-    const i = (iy * r.warped.w + ix) * 4;
-    out.data[o] = r.warped.data[i]; out.data[o + 1] = r.warped.data[i + 1]; out.data[o + 2] = r.warped.data[i + 2]; out.data[o + 3] = 255;
+    const i = (iy * r.warped.w + ix) * 4, R = r.warped.data[i], G = r.warped.data[i + 1], B = r.warped.data[i + 2];
+    // the print reads as paper and pencil; only the pen ink keeps its colour, so the markups carry the eye
+    if (R - G > 55 && R - B > 45 && G < 150) { out.data[o] = R; out.data[o + 1] = G; out.data[o + 2] = B; }
+    else { const l = 0.299 * R + 0.587 * G + 0.114 * B; out.data[o] = Math.min(255, l * 1.02 + 4); out.data[o + 1] = Math.min(255, l + 2); out.data[o + 2] = l * 0.97; }
+    out.data[o + 3] = 255;
   }
   return { marks, flat: out, corners: r.corners, photo, ms: r.ms };
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, closeModal } from './bridge.js';
 import { analyse, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
+import { gateOf } from '../../../shared/gate.mjs';
 
 const MODES = [
   { key: 'overlay', label: 'Overlay', hint: 'Shared lines in graphite, removed in red, added in blue' },
@@ -39,7 +40,7 @@ export default function LightTable() {
   const [print, setPrint] = useState(null); // { att, status, result, error }
   const [markDecisions, setMarkDecisions] = useState({});
   const [flatten, setFlatten] = useState(null); // { url, src, from, to, t } while the photo settles onto the sheet
-  const stageRef = useRef(null), camRef = useRef(cam);
+  const stageRef = useRef(null), camRef = useRef(cam), versionRef = useRef(0);
   camRef.current = cam;
 
   // Load the change order and both revisions, then run the engine once.
@@ -58,6 +59,7 @@ export default function LightTable() {
         for (const c of r.clouds) init[c.id] = prior[c.id] || (c.note ? { status: 'declared', note: c.note } : { status: 'open' });
         setDecisions(init);
         if (o.review?.markDecisions && o.review.revB?.id === revB.id) setMarkDecisions(o.review.markDecisions);
+        versionRef.current = o.review?.version || 0;
       } catch (e) { setError(e.message || String(e)); }
     })();
   }, []);
@@ -151,7 +153,7 @@ export default function LightTable() {
     const t = setTimeout(async () => {
       setSaved('Saving');
       try {
-        await invoke('saveReview', { review: {
+        const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
           clouds: res.clouds.map(({ id, n, zone, kind, x0, y0, x1, y1 }) => ({ id, n, zone, kind, box: [x0, y0, x1, y1] })),
@@ -159,6 +161,14 @@ export default function LightTable() {
           print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename } : null,
           marks: marks.map(({ id, n, zone, x0, y0, x1, y1 }) => ({ id, n, zone, box: [x0, y0, x1, y1] })), markDecisions,
         } });
+        if (out?.conflict) {
+          // someone else saved in between: take their decisions, then let this reviewer carry on
+          versionRef.current = out.review.version || 0;
+          setDecisions(out.review.decisions || {}); setMarkDecisions(out.review.markDecisions || {});
+          setSaved('Someone else just saved this review; their decisions are loaded');
+          return;
+        }
+        versionRef.current = out?.version ?? versionRef.current;
         setSaved('Saved to ' + (order?.key || 'the work item'));
       } catch (e) { setSaved('Not saved: ' + e.message); }
     }, 500);
@@ -293,26 +303,7 @@ function cloudState(d) {
   return 'undeclared';
 }
 
-export function gateOf(clouds, decisions, marks = [], markDecisions = {}) {
-  let open = 0, unsigned = 0, rejected = 0;
-  for (const c of clouds) {
-    const d = decisions[c.id] || {};
-    if (d.status === 'rejected') rejected++;
-    else if (d.status !== 'declared' && d.status !== 'accepted') open++;
-    else if (!d.signedBy) unsigned++;
-  }
-  // a pen markup from the floor needs an answer too: raised as a work item, covered by a change, or dismissed
-  const markups = marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)).length;
-  const blocked = open + unsigned + rejected + markups > 0;
-  let text;
-  if (!clouds.length && !marks.length) text = 'No differences found between the revisions';
-  else if (rejected) text = `${rejected} ${rejected === 1 ? 'change was' : 'changes were'} sent back to the drafter`;
-  else if (open) text = `${open} ${open === 1 ? 'change on the sheet is' : 'changes on the sheet are'} not in the change notes`;
-  else if (markups) text = `${markups} pen ${markups === 1 ? 'markup on the printed sheet needs' : 'markups on the printed sheet need'} an answer`;
-  else if (unsigned) text = `${unsigned} declared ${unsigned === 1 ? 'change needs' : 'changes need'} a sign-off`;
-  else text = `All ${clouds.length} changes declared and signed off`;
-  return { blocked, open, unsigned, rejected, markups, text };
-}
+export { gateOf };
 
 // A JPEG of one markup cut from the flattened photo, attached to the work item raised for it.
 function cropJpeg(flat, m) {
@@ -435,6 +426,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, onSelect, onDecide, o
           {!order.notes.length && <li className="none">The work item has no numbered change notes. Number each change in the description, for example "1. Zone D3: bore Ø25 to Ø25.5".</li>}
         </ol>
       </section>
+      <NeedsYou res={res} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} />
       <section className="rl-found">
         <h2>Found on the sheet <span>{res.clouds.length}</span></h2>
         <ul>
@@ -447,7 +439,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, onSelect, onDecide, o
       <PrintSection order={order} res={res} print={print} marks={marks} markDecisions={markDecisions} sel={sel}
         onSelect={onSelect} onReadPhoto={onReadPhoto} onAddPhoto={onAddPhoto} onDecideMark={onDecideMark} onRaiseMark={onRaiseMark} />
       <footer className="rl-foot">
-        <p>Compared {res.revA.filename} with {res.revB.filename} at {res.dpi} dpi in {(res.ms / 1000).toFixed(2)} s. Nothing left Atlassian.</p>
+        <p>Compared {res.revA.filename} with {res.revB.filename} in {(res.ms / 1000).toFixed(2)} s: drawn at {res.displayDpi} dpi, compared at {res.dpi} dpi, in your browser. Nothing left Atlassian.</p>
         <p className="keys">Arrows step through changes, 1 to 9 declare against a note, S signs off, F fits the sheet.</p>
       </footer>
     </aside>
@@ -530,8 +522,36 @@ function MarkCrop({ flat, m }) {
   return <canvas ref={ref} className="rl-crop" role="img" aria-label="The markup on the print" />;
 }
 
+// Sticky at the top of the ledger: how many things still need a person, and a button to the next one.
+function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect }) {
+  const todo = [
+    ...res.clouds.filter((c) => { const d = decisions[c.id] || {}; return d.status === 'rejected' ? false : !(d.status === 'declared' || d.status === 'accepted') || !d.signedBy; }),
+    ...marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)),
+  ];
+  const total = res.clouds.length + marks.length;
+  if (!total) return null;
+  const i = todo.findIndex((x) => x.id === sel);
+  const next = todo[(i + 1) % todo.length];
+  return (
+    <div className={`rl-needs ${todo.length ? '' : 'done'}`}>
+      <p>{todo.length ? <><b>{todo.length} of {total}</b> need you</> : <><b>All {total}</b> answered</>}</p>
+      {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{i === -1 ? 'Start' : 'Next'}</button>}
+    </div>
+  );
+}
+
 function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, onSign }) {
   const state = cloudState(d);
+  if (state === 'signed' && !active) {
+    return (
+      <li className={`rl-row signed compact ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
+        <button className="rl-row-main" onClick={() => onSelect(c)}>
+          <span className="delta">{c.n}</span>
+          <span className="what"><b>Zone {c.zone}</b>{d.status === 'declared' ? `Note ${d.note}` : 'Accepted'}, signed by {d.signedBy}</span>
+        </button>
+      </li>
+    );
+  }
   return (
     <li className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
       <button className="rl-row-main" onClick={() => onSelect(c)}>

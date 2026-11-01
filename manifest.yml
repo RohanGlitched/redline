@@ -19,24 +19,15 @@ modules:
         - path: gate.open
           type: number
           searchAlias: redlineUndeclared
-  # Add this validator to the transition that releases a drawing. It reads the review Redline saved
-  # on the work item and refuses the transition while any change is undeclared, unsigned or sent back,
-  # or when a newer PDF revision was attached after the review.
+  # Add this validator to the transition that releases a drawing. It runs Redline's own check: the review
+  # is read from app storage (no user can edit it), the verdict is recomputed, and the review must cover
+  # the newest PDF revision on the work item.
   jira:workflowValidator:
     - key: redline-release-gate
       name: Redline drawing release gate
-      description: Blocks the transition until every change between the last two PDF drawing revisions is declared in the change notes and signed off in Redline.
+      description: Blocks the transition until every change between the last two PDF drawing revisions is declared in the change notes and signed off in Redline, and every pen markup on a photographed print is answered.
       projectTypes: ['company-managed', 'team-managed']
-      expression: >-
-        issue.attachments.filter(a => a.mimeType == 'application/pdf').length < 2
-        ? true
-        : issue.properties['redline-review'] == null
-        ? 'Redline: compare the two latest drawing revisions on the light table before release.'
-        : issue.properties['redline-review'].revB.id != issue.attachments.filter(a => a.mimeType == 'application/pdf').map(a => a.id).reduce((m, x) => x > m ? x : m, 0)
-        ? 'Redline: a newer drawing revision was attached after the last review. Review it on the light table before release.'
-        : issue.properties['redline-review'].gate.status == 'clear'
-        ? true
-        : 'Redline: ' + issue.properties['redline-review'].gate.text + '. Resolve them on the light table before release.'
+      function: releaseGateFn
   rovo:agent:
     - key: redline-checker
       name: Drawing change checker
@@ -80,6 +71,8 @@ modules:
       handler: index.getDrawingReview
     - key: findBlockedChangeOrders
       handler: index.findBlockedChangeOrders
+    - key: releaseGateFn
+      handler: index.releaseGate
 resources:
   - key: main
     path: static/lighttable/dist
@@ -88,6 +81,7 @@ permissions:
     - read:jira-work
     - write:jira-work
     - read:jira-user
+    - storage:app
 app:
   runtime:
     name: nodejs24.x
