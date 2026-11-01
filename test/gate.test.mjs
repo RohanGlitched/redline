@@ -1,7 +1,7 @@
 // Unit tests for the release verdict and change-note parsing. Run with: npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateOf, verdictOf } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, numbersIn } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 const pdf = (id, created) => ({ id: String(id), mimeType: 'application/pdf', created });
@@ -93,4 +93,19 @@ test('a photo attached after the review blocks release until it is read or set a
   assert.match(verdictOf([C, D, photo], review).text, /newest photo/);
   assert.equal(verdictOf([C, D, photo], { ...review, print: { id: 20 } }).blocked, false);
   assert.equal(verdictOf([C, D, photo], { ...review, print: { id: 20, setAside: true } }).blocked, false);
+});
+
+test('numbers are read from drawing text', () => {
+  assert.deepEqual(numbersIn('Ø25.6 ±0.15'), [25.6, 0.15]);
+});
+
+test('a declared change whose drawing value the note does not state blocks release', () => {
+  const notes = [{ n: 1, text: 'Zone D2: bore callout Ø25 ±0.15 changes to Ø25.5 ±0.15.' }];
+  const c = [{ id: 'c1', values: [25.6, 0.15] }];
+  assert.deepEqual(valueSlip(c[0], notes[0].text), [25.6]);
+  const g = gateOf(c, { c1: signed(1) }, [], {}, null, notes);
+  assert.equal(g.mismatched, 1);
+  assert.match(g.text, /value its change note does not/);
+  assert.equal(gateOf(c, { c1: { ...signed(1), valueOk: { by: 'Priya' } } }, [], {}, null, notes).blocked, false);
+  assert.equal(gateOf([{ id: 'c1', values: [25.5] }], { c1: signed(1) }, [], {}, null, notes).blocked, false);
 });

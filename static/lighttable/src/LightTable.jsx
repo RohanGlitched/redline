@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, closeModal } from './bridge.js';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
-import { gateOf } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip } from '../../../shared/gate.mjs';
 
 const MODES = [
   { key: 'overlay', label: 'Overlay', hint: 'Shared lines in graphite, removed in red, added in blue' },
@@ -203,7 +203,7 @@ export default function LightTable() {
   // Autosave the review. The backend keeps it in app storage, which the release validator reads.
   const allClouds = useMemo(() => Object.values(sheets.compared).flat(), [sheets]);
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
-  const gate = useMemo(() => gateOf(allClouds, decisions, marks, markDecisions, sheetInfo), [allClouds, decisions, marks, markDecisions, sheets]);
+  const gate = useMemo(() => gateOf(allClouds, decisions, marks, markDecisions, sheetInfo, order?.notes), [allClouds, decisions, marks, markDecisions, sheets, order]);
   useEffect(() => {
     if (!res || !Object.keys(decisions).length) return;
     if (readOnly) { setSaved('View only'); return; }
@@ -213,7 +213,7 @@ export default function LightTable() {
         const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
-          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1] })),
+          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values })),
           sheets: sheetInfo,
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
           print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename }
@@ -256,7 +256,10 @@ export default function LightTable() {
       if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j') { select(list[(i + 1) % list.length]); e.preventDefault(); }
       if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k') { select(list[(i - 1 + list.length) % list.length]); e.preventDefault(); }
       if (sel && /^[1-9]$/.test(e.key) && order.notes.some((n) => n.n === +e.key)) decide(sel, { status: 'declared', note: +e.key });
-      if (sel && e.key.toLowerCase() === 's') signOff(sel);
+      if (sel && e.key.toLowerCase() === 's') {
+        const c = allClouds.find((x) => x.id === sel), d = decisions[sel] || {};
+        if (!(d.status === 'declared' && !d.valueOk && valueSlip(c, order.notes.find((n) => n.n === d.note)?.text).length)) signOff(sel);
+      }
       if (e.key.toLowerCase() === 'f') fit();
     };
     addEventListener('keydown', onKey); return () => removeEventListener('keydown', onKey);
@@ -365,6 +368,25 @@ export default function LightTable() {
           onSetAside={(att) => { if (!readOnly) setPrint({ att, status: 'aside' }); }} />
       </div>
     </Shell>
+  );
+}
+
+// Does the drawing say what the change note says? The numbers that are new in revision B's text must all
+// appear in the note the change is declared in. A slip ("note says Ø25.5, drawing says Ø25.6") holds the
+// release until someone confirms the drawing is right or sends it back.
+function ValueCheck({ c, d, note, onDecide }) {
+  if (!c.values?.length || !note) return null;
+  const slip = valueSlip(c, note.text);
+  if (!slip.length) return <p className="rl-value ok">Values match note {note.n}: {c.values.join(', ')}</p>;
+  if (d.valueOk) return <p className="rl-value ok">Drawing value {slip.join(', ')} confirmed against note {note.n} by {d.valueOk.by}</p>;
+  return (
+    <div className="rl-value slip" role="alert">
+      <p><b>The drawing says {slip.join(', ')}.</b> Note {note.n} does not: “{note.text}”</p>
+      <div className="rl-choices">
+        <button className="rl-btn" onClick={() => onDecide(c.id, { valueOk: { by: 'you', at: new Date().toISOString() } })}>The drawing is right</button>
+        <button className="rl-btn danger" onClick={() => onDecide(c.id, { status: 'rejected', note: null })}>Send back</button>
+      </div>
+    </div>
   );
 }
 
@@ -646,14 +668,23 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
         <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{KIND_TEXT[c.kind]}</span>
         <Crop res={res} c={c} />
       </button>
+      {(c.before || c.after) && (
+        <p className="rl-text">
+          {!c.before ? <>New text <span className="new">{c.after}</span></>
+            : !c.after ? <>Text removed <span className="old">{c.before}</span></>
+            : <><span className="old">{c.before}</span><span aria-hidden="true"> → </span><span className="sr">changes to </span><span className="new">{c.after}</span></>}
+        </p>
+      )}
       <div className="rl-row-act">
         {state === 'rejected' ? (
           <p className="st">Sent back to the drafter. <button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null })}>Undo</button></p>
         ) : d.status === 'declared' || d.status === 'accepted' ? (
           <>
             <p className="st">{d.status === 'declared' ? <>Declared in note {d.note}</> : <>Accepted as a drawing correction</>}
-              {' '}<button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null, signedBy: null, signedAt: null })}>Change</button></p>
+              {' '}<button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null, signedBy: null, signedAt: null, valueOk: null })}>Change</button></p>
+            {d.status === 'declared' && <ValueCheck c={c} d={d} note={notes.find((n) => n.n === d.note)} onDecide={onDecide} />}
             {d.signedBy ? <p className="signed">Signed off by {d.signedBy}, {new Date(d.signedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
+              : (d.status === 'declared' && !d.valueOk && valueSlip(c, notes.find((n) => n.n === d.note)?.text).length) ? null
               : <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>}
           </>
         ) : (

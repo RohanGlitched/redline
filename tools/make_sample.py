@@ -64,12 +64,14 @@ if __name__ == '__main__':
     a.save(os.path.join(OUT, 'BRKT-0142_rev-C.pdf'))
     b, pb = load()
     boxes = json.loads(os.environ.get('RL_BOXES', '{}'))
+    # the note says Ø25.5; the sample drawing says Ø25.6, a drafter's slip Redline's value check catches
+    DIM_TEXT = os.environ.get('RL_DIMTEXT', 'Ø25.6 ±0.15')
     edits = []
     if 'dim' in boxes:  # declared 1: change the bore callout text
         r = pymupdf.Rect(boxes['dim']); remove(pb, r)
-        pb.insert_text((r.x0, r.y1 - 1), 'Ø25.5 ±0.15', fontsize=boxes.get('dimsize', 7), color=(0, 0, 1),
+        pb.insert_text((r.x0, r.y1 - 1), DIM_TEXT, fontsize=boxes.get('dimsize', 7), color=(0, 0, 1),
                        morph=(pymupdf.Point(r.x0, r.y1 - 1), pymupdf.Matrix(boxes.get('dimrot', 0))))
-        edits.append(('declared', 'Bore callout Ø25 ±0.15 → Ø25.5 ±0.15', list(r)))
+        edits.append(('declared', f'Bore callout Ø25 ±0.15 → {DIM_TEXT}', list(r)))
     if 'note' in boxes:  # declared 2: new note
         x, y = boxes['note']
         pb.insert_text((x, y), 'BREAK ALL SHARP EDGES 0.2 MAX', fontsize=7, color=(0, 0, 0))

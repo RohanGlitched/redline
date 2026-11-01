@@ -3,6 +3,7 @@
 import { renderPage } from './pdf.js';
 import { compare, warpGray } from './engine/core.mjs';
 import { readMarkups } from './engine/markup.mjs';
+import { numbersIn } from '../../../shared/gate.mjs';
 
 export const ENGINE_VERSION = 'redline-core 0.3';
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -39,6 +40,21 @@ async function download(invoke, id) {
 export async function loadRevision(invoke, att, dpi, page = 1, maxPixels) {
   // pdf.js takes ownership of the buffer it is given, so it gets a copy and the cached file stays usable
   return renderPage((await fetchBytes(invoke, att.id)).slice(), page, dpi, maxPixels);
+}
+
+// The drawing text inside a change, before and after, and the numbers that are new in revision B. Boxes
+// are in analysis pixels on revision A; revision B's text is found through the registration transform.
+function textOf(c, textsA = [], textsB = [], T, k) {
+  const pad = 10, hit = (t, x0, y0, x1, y1) => t.x1 / k >= x0 && t.x0 / k <= x1 && t.y1 / k >= y0 && t.y0 / k <= y1;
+  const inA = textsA.filter((t) => hit(t, c.x0 - pad, c.y0 - pad, c.x1 + pad, c.y1 + pad));
+  const corners = [[c.x0, c.y0], [c.x1, c.y0], [c.x0, c.y1], [c.x1, c.y1]].map(([x, y]) => [T[0] * x + T[1] * y + T[2], T[3] * x + T[4] * y + T[5]]);
+  const bx = corners.map((p) => p[0]), by = corners.map((p) => p[1]);
+  const inB = textsB.filter((t) => hit(t, Math.min(...bx) - pad, Math.min(...by) - pad, Math.max(...bx) + pad, Math.max(...by) + pad));
+  const clean = (ts) => ts.map((t) => t.str.trim()).join(' ').replace(/\uFFFD/g, 'Ø').replace(/\s+/g, ' ').trim();
+  const before = clean(inA), after = clean(inB);
+  if (before === after) return {};
+  const old = new Set(numbersIn(before));
+  return { before, after, values: [...new Set(numbersIn(after).filter((v) => !old.has(v)))] };
 }
 
 // A sheet only one revision has: the whole sheet is one change, which has to be declared like any other.
@@ -163,7 +179,7 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
   const hiBw = k === 2 ? warpGray(hB, [p[0], p[1], p[2] * k, p[3], p[4], p[5] * k], hA.w, hA.h) : Bw;
   const clouds = r.clouds
     .sort((p, q) => p.y0 - q.y0 || p.x0 - q.x0)
-    .map((c, i) => ({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed, zone: zoneOf(c, A.w, A.h) }));
+    .map((c, i) => ({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed, zone: zoneOf(c, A.w, A.h), ...textOf(c, hA.texts, hB.texts, r.transform, k) }));
   return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes, page || 1), transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
 }
 

@@ -305,3 +305,13 @@ button { font: inherit; color: inherit; }
 .rl-gadget-list .why { grid-area: w; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--rl-danger-text); }
 .rl-gadget-list .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
 .rl-gadget-none { margin: 0; color: var(--rl-subtle); }
+
+/* the drawing's own text, before and after, and the value check against the change note */
+.rl-text { margin: 2px 12px 6px 46px; font: 12px var(--rl-letter); color: var(--rl-subtle); overflow-wrap: anywhere; }
+.rl-text .old { color: var(--rl-danger-text); text-decoration: line-through; text-decoration-thickness: 1px; }
+.rl-text .new { color: var(--rl-diazo); font-weight: 700; }
+.rl-value { margin: 4px 0 6px; font-size: 12px; }
+.rl-value.ok { color: var(--rl-success-text); }
+.rl-value.slip { padding: 8px 10px; border-radius: 4px; background: var(--rl-danger-bg); color: var(--rl-danger-text); }
+.rl-value.slip p { margin: 0 0 6px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

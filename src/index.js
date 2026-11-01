@@ -48,7 +48,7 @@ export async function loadChangeOrder(key) {
     attachments,
     review,
     // the same verdict the release validator would give right now
-    verdict: verdictOf(issue.fields.attachment, review),
+    verdict: verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description)),
   };
 }
 
@@ -120,7 +120,8 @@ async function canEdit(key) {
 resolver.define('saveReview', async (req) => {
   const key = issueKey(req);
   if (!(await canEdit(key))) return { readOnly: true };
-  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=summary`)).json();
+  const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=summary,description`)).json();
+  const notes = notesFromAdf(issue.fields.description);
   const stored = await kvs.get(reviewKey(issue.id));
   const base = req.payload.baseVersion || 0;
   if (stored && (stored.version || 0) !== base) return { conflict: true, review: stored };
@@ -133,6 +134,8 @@ resolver.define('saveReview', async (req) => {
     if (d.signedAt && d.signedAt !== before?.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); }
     else if (before?.signedById && d.signedAt === before.signedAt) { d.signedById = before.signedById; d.signedBy = before.signedBy; }
     if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
+    // "the drawing is right" on a value slip is a decision too: named by Jira, kept as first recorded
+    if (d.valueOk) d.valueOk = before?.valueOk || { by: me.displayName, byId: me.accountId, at: now };
   }
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
   // an earlier comparison found, so a review cannot be emptied after the fact.
@@ -144,7 +147,7 @@ resolver.define('saveReview', async (req) => {
     const mids = new Set((r.marks || []).map((m) => m.id));
     r.marks = [...(r.marks || []), ...(stored.marks || []).filter((m) => !mids.has(m.id))];
   }
-  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets);
+  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes);
   const review = { ...r, gate, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
   await kvs.set(reviewKey(issue.id), review);
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
@@ -220,11 +223,11 @@ export const handler = resolver.getDefinitions();
 // recomputes the verdict, and checks that the review covers the newest PDF revision on the work item.
 export async function releaseGate(event) {
   const key = event.issue?.key, id = event.issue?.id;
-  const res = await api.asApp().requestJira(route`/rest/api/3/issue/${key || id}?fields=attachment`);
+  const res = await api.asApp().requestJira(route`/rest/api/3/issue/${key || id}?fields=attachment,description`);
   // fail closed: if Jira cannot tell us what is attached, the release waits
   if (!res.ok) return { result: false, errorMessage: `Redline could not read this work item's drawings (Jira answered ${res.status}). Try the transition again.` };
   const issue = await res.json();
-  const v = verdictOf(issue.fields?.attachment, await kvs.get(reviewKey(issue.id)));
+  const v = verdictOf(issue.fields?.attachment, await kvs.get(reviewKey(issue.id)), notesFromAdf(issue.fields?.description));
   return v.blocked ? { result: false, errorMessage: `Redline: ${v.text}. Open the light table on this work item to resolve it before release.` } : { result: true };
 }
 
@@ -267,14 +270,14 @@ async function reviewedChangeOrders(projectKey) {
   const jql = `redlineGate IS NOT EMPTY${project} ORDER BY updated DESC`;
   const res = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jql, maxResults: 100, fields: ['summary', 'status', 'attachment'] }),
+    body: JSON.stringify({ jql, maxResults: 100, fields: ['summary', 'status', 'attachment', 'description'] }),
   });
   if (!res.ok) return { error: `Search failed (${res.status}).` };
   const issues = (await res.json()).issues || [];
   const reviews = await Promise.all(issues.map((i) => kvs.get(reviewKey(i.id))));
   return {
     items: issues.map((i, k) => {
-      const v = verdictOf(i.fields.attachment, reviews[k]);
+      const v = verdictOf(i.fields.attachment, reviews[k], notesFromAdf(i.fields.description));
       return { key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text };
     }),
   };
