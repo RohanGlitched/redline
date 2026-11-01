@@ -336,25 +336,24 @@ async function reviewedChangeOrders(projectKey) {
     cursor = page.nextCursor;
   }
   if (!ids.length) return { items: [] };
-  const project = projectKey ? ` AND project = "${String(projectKey).replace(/"/g, '')}"` : '';
+  const project = projectKey ? `${String(projectKey).toUpperCase()}-` : null;
   const items = [];
   for (let k = 0; k < ids.length; k += 100) {
-    const jql = `id in (${ids.slice(k, k + 100).join(',')})${project} ORDER BY updated DESC`;
-    const res = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+    // bulk fetch answers for the ids it can see and lists the rest (deleted, or hidden from this user) as
+    // errors, so one missing work item never costs a request per item
+    const res = await api.asUser().requestJira(route`/rest/api/3/issue/bulkfetch`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jql, maxResults: 100, fields: ['summary', 'status', 'attachment', 'description'] }),
+      body: JSON.stringify({ issueIdsOrKeys: ids.slice(k, k + 100), fields: ['summary', 'status', 'attachment', 'description', 'updated'] }),
     });
-    // a chunk Jira refuses (one id deleted or hidden from this user) is read issue by issue instead
-    const issues = res.ok ? (await res.json()).issues || [] : (await Promise.all(ids.slice(k, k + 100).map(async (id) => {
-      const one = await api.asUser().requestJira(route`/rest/api/3/issue/${id}?fields=summary,status,attachment,description`);
-      return one.ok ? one.json() : null;
-    }))).filter(Boolean).filter((i) => !projectKey || i.key.startsWith(`${String(projectKey).toUpperCase()}-`));
-    const reviews = issues.map((i) => stored.get(String(i.id)));
-    issues.forEach((i, n) => {
-      const v = verdictOf(i.fields.attachment, reviews[n], notesFromAdf(i.fields.description));
-      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text, since: reviews[n]?.heldSince || reviews[n]?.savedAt });
-    });
+    if (!res.ok) continue;
+    const issues = ((await res.json()).issues || []).filter((i) => !project || i.key.startsWith(project));
+    for (const i of issues) {
+      const review = stored.get(String(i.id));
+      const v = verdictOf(i.fields.attachment, review, notesFromAdf(i.fields.description));
+      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text, since: review?.heldSince || review?.savedAt, updated: i.fields.updated });
+    }
   }
+  items.sort((x, y) => Date.parse(y.updated || 0) - Date.parse(x.updated || 0));
   return { items };
 }
 
