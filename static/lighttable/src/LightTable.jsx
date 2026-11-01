@@ -680,7 +680,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
           {!order.notes.length && <li className="none">The work item has no numbered change notes. Number each change in the description, for example "1. Zone D3: bore Ø25 to Ø25.5".</li>}
         </ol>
       </section>
-      <NeedsYou res={res} all={allClouds} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} />
+      <NeedsYou res={res} all={allClouds} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} clear={gate && !gate.blocked} />
       <section className="rl-found">
         <h2>Found on the sheet <span>{res.clouds.length}</span></h2>
         <ul>
@@ -792,18 +792,21 @@ function whatOf(todo, marks) {
 }
 
 // what still needs an answer on every sheet compared so far, not just the one on the table
-function NeedsYou({ res, all, decisions, marks, markDecisions, sel, onSelect, readOnly }) {
+function NeedsYou({ res, all, decisions, marks, markDecisions, sel, onSelect, readOnly, clear }) {
   const todo = [
     ...(all || res.clouds).filter((c) => { const d = decisions[c.id] || {}; return d.status === 'rejected' ? false : !(d.status === 'declared' || d.status === 'accepted') || !d.signedBy; }),
     ...marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)),
   ];
   const total = (all || res.clouds).length + marks.length;
   if (!total) return null;
+  const signers = [...new Set(Object.values(decisions).map((d) => d.signedBy).filter(Boolean))];
   const i = todo.findIndex((x) => x.id === sel);
   const next = todo[(i + 1) % todo.length];
   return (
     <div className={`rl-needs ${todo.length ? '' : 'done'}`}>
-      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? 'needs a decision' : 'need a decision') : 'need you'}<span className="what">{whatOf(todo, marks)}</span></> : <><b>All {total}</b> answered</>}</p>
+      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? 'needs a decision' : 'need a decision') : 'need you'}<span className="what">{whatOf(todo, marks)}</span></>
+        : <><b>All {total}</b> answered{signers.length ? <span className="what">Signed off by {signers.join(', ')}</span> : null}
+          {clear ? <span className="what ready">Jira will now let this change order through to release.</span> : null}</>}</p>
       {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{readOnly ? (i === -1 ? 'Step through' : 'Next') : (i === -1 ? 'Start' : 'Next')}</button>}
     </div>
   );

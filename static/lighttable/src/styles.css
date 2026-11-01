@@ -352,7 +352,16 @@ button { font: inherit; color: inherit; }
 .why.pills { display: flex; flex-wrap: wrap; gap: 4px; color: var(--rl-danger-text, #ae2e24); }
 
 /* what a changed callout means: a tighter tolerance is a cost and inspection question, so it stands out */
-.rl-meaning { margin: 2px 0 0; font-size: 12px; font-weight: 600; color: var(--rl-text); }
+.rl-meaning { margin: -2px 12px 6px 46px; font-size: 12px; font-weight: 600; color: var(--rl-text); }
 .rl-meaning.tighter { color: var(--rl-danger-text, #ae2e24); }
 
 .rl-warn { color: var(--ds-text-warning, #7f5f01); }
+
+/* short laptop screens: the change notes scroll in their own band, so the first change and its value warning
+   stay in view without scrolling the ledger */
+@media (max-height: 760px) {
+  .rl-notes { max-height: 132px; overflow: auto; padding-top: 10px; border-bottom: 1px solid var(--rl-border); }
+  .rl-notes li { padding: 5px 0; }
+  .rl-found { padding-top: 10px; }
+}
+.rl-needs .what.ready { color: var(--rl-success-text); font-weight: 600; }
