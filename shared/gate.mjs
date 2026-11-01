@@ -29,6 +29,9 @@ export function noteSlip(cloud, noteText) {
   return [...new Set(said.filter((v) => !before.includes(v) && !after.includes(v)))];
 }
 
+// "The drawing is right" stands for the note as it read when said; a rewritten note asks again.
+export const valueOkFor = (d, note) => !!d?.valueOk && (d.valueOk.noteText == null || !note || d.valueOk.noteText === noteKey(note.text));
+
 // Either way round: the drawing and its note disagree about a value.
 export const slipOf = (cloud, noteText) => valueSlip(cloud, noteText).length + noteSlip(cloud, noteText).length > 0;
 
@@ -42,7 +45,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     else if (d.status === 'declared' && notes && !note) open++;
     // a signature is for the note as it read when signed: a rewritten (or renumbered) note needs signing again
     else if (note && d.signedBy && d.noteText != null && noteKey(note.text) !== d.noteText) noteChanged++;
-    else if (d.status === 'declared' && notes && !d.valueOk && slipOf(c, notes.find((n) => n.n === d.note)?.text)) mismatched++;
+    else if (d.status === 'declared' && notes && !valueOkFor(d, note) && slipOf(c, note?.text)) mismatched++;
     else if (!d.signedBy) unsigned++;
   }
   // a pen markup from the floor needs an answer too: raised as a work item, covered by a change, or dismissed

@@ -1,7 +1,7 @@
 // Unit tests for the release verdict and change-note parsing. Run with: npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 const pdf = (id, created) => ({ id: String(id), mimeType: 'application/pdf', created });
@@ -297,4 +297,13 @@ test('a value the note promises but the drawing does not show holds the release'
   assert.deepEqual(noteSlip({ before: 'Ø25 ±0.15', after: 'Ø25.5 ±0.1' }, note[0].text), []);
   // a note about something else is not read against this text
   assert.deepEqual(noteSlip({ before: 'R3', after: 'R4' }, note[0].text), []);
+});
+
+test('"the drawing is right" is for the note as it read: a rewritten note asks again', () => {
+  const c = [{ id: 'c1', values: [25.6] }];
+  const said = { status: 'declared', note: 1, signedBy: 'Asha', noteText: 'Zone D2: bore Ø25 becomes Ø25.5', valueOk: { by: 'Asha', noteText: 'Zone D2: bore Ø25 becomes Ø25.5' } };
+  assert.equal(gateOf(c, { c1: said }, [], {}, null, [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.5' }]).mismatched, 0);
+  const g = gateOf(c, { c1: { ...said, noteText: 'Zone D2: bore Ø25 becomes Ø25.7', signedBy: 'Asha' } }, [], {}, null, [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.7' }]);
+  assert.equal(g.mismatched, 1);
+  assert.equal(valueOkFor(said, { text: 'Zone D2: bore Ø25 becomes Ø25.7' }), false);
 });

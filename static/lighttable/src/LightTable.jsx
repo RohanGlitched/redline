@@ -7,7 +7,7 @@ import { revisionOfName } from './engine/titleblock.mjs';
 import { meaningOf } from './engine/meaning.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
-import { gateOf, valueSlip, noteSlip, slipOf, noteKey } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip, noteSlip, slipOf, noteKey, valueOkFor } from '../../../shared/gate.mjs';
 
 const MODES = [
   { key: 'overlay', label: 'Overlay', hint: 'Shared lines in graphite, removed in red, added in blue' },
@@ -363,6 +363,8 @@ export default function LightTable() {
     if (!c) return;
     const isMark = marks.some((m) => m.id === c.id), on = isMark ? 1 : c.sheet || res.sheet;
     if (on !== res.sheet) { focusRef.current = { id: c.id, sheet: on }; if (!turning) goSheet(on); return; }
+    // a drawing change is shown on the drawing (the photo's handwriting would cover it); a pen markup on the photo
+    setMode((m) => (isMark ? 'print' : m === 'print' ? 'overlay' : m));
     setSel(c.id); flyTo(c);
   };
 
@@ -416,7 +418,7 @@ export default function LightTable() {
       const d = decisions[sel] || {};
       if (/^[1-9]$/.test(e.key) && c.kind !== 'titleBlock' && order.notes.some((n) => n.n === +e.key) && !(d.status === 'declared' && d.note === +e.key)) decide(sel, { status: 'declared', note: +e.key, signedBy: null, signedAt: null, valueOk: null });
       if (e.key.toLowerCase() === 's' && (d.status === 'accepted' || (d.status === 'declared' && order.notes.some((n) => n.n === d.note))) && !d.signedBy) {
-        if (!(d.status === 'declared' && !d.valueOk && slipOf(c, order.notes.find((n) => n.n === d.note)?.text))) signOff(sel);
+        if (!(d.status === 'declared' && !valueOkFor(d, order.notes.find((n) => n.n === d.note)) && slipOf(c, order.notes.find((n) => n.n === d.note)?.text))) signOff(sel);
       }
     };
     addEventListener('keydown', onKey); return () => removeEventListener('keydown', onKey);
@@ -507,7 +509,7 @@ export default function LightTable() {
                 {res.sheet === 1 && marks.map((m, i) => {
                   const d = markDecisions[m.id] || {};
                   return (
-                    <g key={m.id} className={`rl-mark ${d.status || 'open'} ${sel === m.id ? 'sel' : ''}`} style={{ '--delay': `${i * 220}ms` }}
+                    <g key={m.id} className={`rl-mark ${d.status || 'open'} ${sel === m.id ? 'sel' : sel && !marks.some((x) => x.id === sel) ? 'faded' : ''}`} style={{ '--delay': `${i * 220}ms` }}
                       onClick={(e) => { e.stopPropagation(); select(m); }}>
                       <ellipse cx={(m.x0 + m.x1) / 2} cy={(m.y0 + m.y1) / 2} rx={(m.x1 - m.x0) / 2 + 14 / cam.s} ry={(m.y1 - m.y0) / 2 + 12 / cam.s} pathLength="1" />
                       <g className="tag" transform={`translate(${m.x0 - 6 / cam.s},${m.y0 - 6 / cam.s}) scale(${Math.min(2.5, 1 / cam.s)})`}>
@@ -546,14 +548,15 @@ function ValueCheck({ c, d, note, onDecide }) {
   if (!note || (!c.values?.length && !c.before)) return null;
   const slip = valueSlip(c, note.text), promised = noteSlip(c, note.text);
   if (!slip.length && !promised.length) return c.values?.length ? <p className="rl-value ok">Values match note {note.n}: {c.values.join(', ')}</p> : null;
-  if (d.valueOk) return <p className="rl-value ok">Drawing confirmed against note {note.n} by {d.valueOk.by}</p>;
+  if (d.valueOk && (d.valueOk.noteText == null || d.valueOk.noteText === noteKey(note.text))) return <p className="rl-value ok">Drawing confirmed against note {note.n} by {d.valueOk.by}</p>;
   return (
     <div className="rl-value slip" role="alert">
-      <p>{slip.length > 0 && <b>Drawing says {slip.join(', ')}; note {note.n} does not. </b>}
-        {promised.length > 0 && <b>Note {note.n} says {promised.join(', ')}; the drawing does not. </b>}
+      <p>{slip.length > 0 && promised.length > 0 ? <b>Note {note.n} says {promised.join(', ')}; the drawing says {slip.join(', ')}. </b>
+        : slip.length > 0 ? <b>Drawing says {slip.join(', ')}; note {note.n} does not. </b>
+        : <b>Note {note.n} says {promised.join(', ')}; the drawing does not. </b>}
         Note {note.n}: “{note.text}”</p>
       <div className="rl-choices">
-        <button className="rl-btn" onClick={() => onDecide(c.id, { valueOk: { by: 'you', at: new Date().toISOString() } })}>The drawing is right</button>
+        <button className="rl-btn" onClick={() => onDecide(c.id, { valueOk: { by: 'you', at: new Date().toISOString(), noteText: noteKey(note.text) } })}>The drawing is right</button>
         <button className="rl-btn danger" onClick={() => onDecide(c.id, { status: 'rejected', note: null })}>Send back</button>
       </div>
     </div>
@@ -951,7 +954,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
     <li ref={rowRef} className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * stagger(res.clouds.length)}ms` }}>
       <button className="rl-row-main" onClick={() => onSelect(c)}>
         <span className="delta">{c.n}</span>
-        <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{kindText(c)}</span>
+        <span className="what"><b>{c.kind?.startsWith("sheet") ? "Whole sheet" : `Zone ${c.zone}`}</b>{meaningOf(c.before, c.after)[0]?.text || kindText(c)}</span>
         <Crop res={res} c={c} />
       </button>
       {(c.before || c.after) && (
@@ -961,7 +964,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
             : <><span className="old">{c.before}</span><span aria-hidden="true"> → </span><span className="sr">changes to </span><span className="new">{c.after}</span></>}
         </p>
       )}
-      {meaningOf(c.before, c.after).map((m) => <p key={m.kind} className={`rl-meaning ${m.tighter ? 'tighter' : ''}`}>{m.text}</p>)}
+      {meaningOf(c.before, c.after).slice(1).map((m) => <p key={m.kind} className={`rl-meaning ${m.tighter ? 'tighter' : ''}`}>{m.text}</p>)}
       <div className="rl-row-act">
         {state === 'rejected' ? (
           <p className="st">Sent back to the drafter. <button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null })}>Undo</button></p>
@@ -973,7 +976,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
             {d.signedBy && d.status === 'declared' && d.noteText != null && notes.some((n) => n.n === d.note) && noteKey(notes.find((n) => n.n === d.note).text) !== d.noteText
               ? <><p className="rl-warn">Note {d.note} was edited after {d.signedBy} signed it off.</p><button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off again</button></>
               : d.signedBy ? <p className="signed">Signed off by {d.signedBy}, {new Date(d.signedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
-              : (d.status === 'declared' && (!notes.some((n) => n.n === d.note) || (!d.valueOk && slipOf(c, notes.find((n) => n.n === d.note)?.text)))) ? null
+              : (d.status === 'declared' && (!notes.some((n) => n.n === d.note) || (!valueOkFor(d, notes.find((n) => n.n === d.note)) && slipOf(c, notes.find((n) => n.n === d.note)?.text)))) ? null
               : <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>}
           </>
         ) : (

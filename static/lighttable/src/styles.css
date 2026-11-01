@@ -360,7 +360,7 @@ button { font: inherit; color: inherit; }
 /* short laptop screens: the change notes scroll in their own band, so the first change and its value warning
    stay in view without scrolling the ledger */
 @media (max-height: 760px) {
-  .rl-notes { max-height: 132px; overflow: auto; padding-top: 10px; border-bottom: 1px solid var(--rl-border); }
+  .rl-notes { flex: 0 0 auto; min-height: 96px; max-height: 132px; overflow: auto; padding-top: 10px; border-bottom: 1px solid var(--rl-border); }
   .rl-notes li { padding: 5px 0; }
   .rl-found { padding-top: 10px; }
 }
@@ -370,3 +370,5 @@ button { font: inherit; color: inherit; }
 .rl-confirm { margin: 10px 0 0; padding: 10px 12px; border: 1px dashed var(--rl-border); border-radius: 6px; font-size: 13px; color: var(--rl-subtle); }
 .rl-confirm p { margin: 0 0 8px; } .rl-confirm.done p { margin: 0; }
 .rl-confirm b { color: var(--rl-text); }
+/* while a drawing change is selected, the pen markups step back so the change reads first */
+.rl-mark.faded ellipse { opacity: 0.18; transition: opacity .2s; } .rl-mark.faded .tag { opacity: 0.4; }

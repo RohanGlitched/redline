@@ -178,7 +178,13 @@ resolver.define('saveReview', async (req) => {
     else if (d.signedAt) { d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; signed.push(id); }
     if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
     // "the drawing is right" on a value slip is a decision too: named by Jira, kept as first recorded
-    if (d.valueOk) d.valueOk = (same && before?.valueOk) || { by: me.displayName, byId: me.accountId, at: now };
+    // "the drawing is right" is kept as first recorded, for the note's words; a rewritten note drops it
+    if (d.valueOk) {
+      const kept = same && before?.valueOk && (before.valueOk.noteText == null || before.valueOk.noteText === noteText) ? before.valueOk : null;
+      if (kept) d.valueOk = kept;
+      else if (before?.valueOk && (before.valueOk.noteText ?? noteText) !== noteText && d.valueOk.at === before.valueOk.at) delete d.valueOk;
+      else d.valueOk = { by: me.displayName, byId: me.accountId, at: now, ...(noteText != null ? { noteText } : {}) };
+    }
   }
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
   // an earlier comparison found, and what was found about a change (its box, text and values) stays as
