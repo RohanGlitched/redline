@@ -17,7 +17,8 @@ const MODES = [
 ];
 const kindText = (c) => (c.kind === 'titleBlock' ? `Title block reads Rev ${c.titleBlock.b}; this revision is Rev ${c.titleBlock.expected}`
   : c.housekeeping === 'revLetter' ? `Revision letter ${c.revLetter.a} to ${c.revLetter.b}, as this revision should read`
-  : c.countedBack ? 'Set aside by Redline as a re-plot shift, counted back in by the reviewer' : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
+  : c.countedBack ? 'Set aside by Redline as a re-plot shift, counted back in by the reviewer'
+  : c.textOnly && c.housekeeping !== 'stamp' ? 'Text changed (too small a change to show in the line work)' : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
   : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}` : KIND_TEXT[c.kind]);
 const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed', sheetAdded: 'Whole sheet added in this revision', sheetRemoved: 'Whole sheet removed in this revision' };
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -57,6 +58,7 @@ export default function LightTable() {
   const [aside, setAside] = useState({}); // { [sheet]: differences set aside as re-plot shifts }
   const loadedSheets = useRef(new Set()); // sheets whose saved decisions were carried over this session
   const sheetRef = useRef(1);
+  const countedBack = useRef({}); // { [sheet]: changes counted back in this session }
   const [showAside, setShowAside] = useState(false);
   const loadSheet = useCallback(async (o, n, revA, revB, keep = false) => {
     if (keep) setTurning(n); else setRes(null);
@@ -73,6 +75,7 @@ export default function LightTable() {
     const sameRevB = o.review && o.review.revB?.id === revB.id;
     const back = sameRevB ? (o.review.clouds || []).filter((c) => c.countedBack && (c.sheet || 1) === n)
       .map((c) => ({ ...c, x0: c.box[0], y0: c.box[1], x1: c.box[2], y1: c.box[3] })) : [];
+    for (const b of countedBack.current[n] || []) if (!back.some((x) => x.id === b.id)) back.push({ ...b, box: [b.x0, b.y0, b.x1, b.y1] });
     const clouds = [...found, ...back.filter((b) => !found.some((c) => c.id === b.id))];
     // decisions saved earlier follow their change by where it is on the sheet, not by its number, so a
     // newer engine that finds the changes in another order (or drops one) never moves a signature
@@ -124,9 +127,9 @@ export default function LightTable() {
     try { await loadSheet(order, n, res.revA, res.revB, true); setSheet(n); } catch (e) { setError(e.message || String(e)); }
   };
 
-  const overlayCanvas = useCanvasImage(useMemo(() => res && composite(res.hiA, res.hiBw), [res]));
-  const aCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiA, [43, 47, 54]), [res]));
-  const bCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiBw, [44, 74, 154]), [res]));
+  const overlayCanvas = useCanvasImage(useMemo(() => res && composite(res.hiA, res.hiBw), [res?.hiA, res?.hiBw]));
+  const aCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiA, [43, 47, 54]), [res?.hiA]));
+  const bCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiBw, [44, 74, 154]), [res?.hiBw]));
   // After a sheet is compared, send the issue panel a small diazo-blue picture of revision B for it.
   const thumbsSent = useRef(new Set());
   useEffect(() => {
@@ -155,7 +158,7 @@ export default function LightTable() {
     const t1 = setTimeout(() => setPhase('clouds'), 1250);
     const t2 = setTimeout(() => setPhase('ready'), 1250 + stagger(res.clouds.length) * res.clouds.length + 600);
     return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [res]);
+  }, [res?.sheet, res?.A]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (mode !== 'blink') return;
@@ -245,6 +248,9 @@ export default function LightTable() {
     // a comparison that found nothing is a review too: it is saved so the release can go ahead
     if (!res) return;
     if (readOnly) { setSaved('View only'); return; }
+    // a save before the opening moment ends, or while the photo is still being read, would store a review
+    // without its pen markups; it waits
+    if (phase !== 'ready' || print?.status === 'reading' || (res.sheet === 1 && (order?.images || []).length && !print)) return;
     if (saving.current) { pending.current = true; return; }
     const t = setTimeout(async () => {
       saving.current = true;
@@ -253,7 +259,7 @@ export default function LightTable() {
         const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
-          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack, titleBlock, revLetter }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack, titleBlock, revLetter })),
+          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly })),
           sheets: sheetInfo,
           setAside: Object.values(aside).flat().slice(0, 300).map(({ id, sheet: sh, zone, x0, y0, x1, y1, match }) => ({ id, sheet: sh, zone, box: [x0, y0, x1, y1], match })),
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
@@ -294,7 +300,7 @@ export default function LightTable() {
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [decisions, res, markDecisions, print, sheets, aside, saveTick]);
+  }, [decisions, res, markDecisions, print, sheets, aside, saveTick, phase]);
 
   const flyTo = useCallback((c) => {
     if (!stageRef.current || !c) return;
@@ -305,7 +311,12 @@ export default function LightTable() {
     animateCam(camRef.current, target, setCam);
   }, []);
 
-  const select = (c) => { setSel(c.id); flyTo(c); };
+  const select = (c) => {
+    if (!c) return;
+    const isMark = marks.some((m) => m.id === c.id), on = isMark ? 1 : c.sheet || res.sheet;
+    if (on !== res.sheet) { focusRef.current = { id: c.id, sheet: on }; if (!turning) goSheet(on); return; }
+    setSel(c.id); flyTo(c);
+  };
 
   // Opened from the issue panel on one change (or one sheet): turn to its sheet, then fly to it.
   const focusRef = useRef(undefined);
@@ -315,10 +326,17 @@ export default function LightTable() {
     if (!f || phase !== 'ready' || !res) return;
     if ((f.sheet || 1) !== res.sheet) { if (!turning && f.sheet <= sheets.count) goSheet(f.sheet); return; }
     focusRef.current = null;
-    const c = f.id && res.clouds.find((x) => x.id === f.id);
+    const c = f.id && (res.clouds.find((x) => x.id === f.id) || (res.sheet === 1 && marks.find((m) => m.id === f.id)));
     if (c) select(c);
   }, [phase, res]);
-  const decide = (id, patch) => { if (!readOnly) setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); };
+  const decide = (id, patch) => {
+    if (readOnly) return;
+    setDecisions((d) => {
+      const cur = d[id] || {};
+      const moved = 'status' in patch && patch.status !== cur.status || 'note' in patch && patch.note !== cur.note;
+      return { ...d, [id]: { ...cur, ...(moved ? { signedBy: null, signedAt: null, valueOk: null } : {}), ...patch } };
+    });
+  };
   const signOff = (id) => decide(id, { signedBy: order.user.displayName, signedAt: new Date().toISOString() });
   // a reviewer who disagrees with the engine counts a set-aside difference back in: it becomes a change
   // like any other, open until it is declared or accepted and signed
@@ -327,6 +345,7 @@ export default function LightTable() {
     const n = a.sheet, num = Math.max(0, ...(sheets.compared[n] || []).map((c) => c.n)) + 1;
     const c = { id: `s${n}-b${a.id.split('-a')[1]}`, n: num, sheet: n, x0: a.x0, y0: a.y0, x1: a.x1, y1: a.y1, zone: a.zone, kind: a.kind === 'added' || a.kind === 'removed' ? a.kind : 'changed', countedBack: true };
     setAside((x) => ({ ...x, [n]: (x[n] || []).filter((y) => y.id !== a.id) }));
+    countedBack.current[n] = [...(countedBack.current[n] || []), c];
     setSheets((x) => ({ ...x, compared: { ...x.compared, [n]: [...(x.compared[n] || []), c] } }));
     setRes((r) => (r.sheet === n ? { ...r, clouds: [...r.clouds, c] } : r));
     setDecisions((d) => ({ ...d, [c.id]: { status: 'open' } }));
@@ -337,7 +356,7 @@ export default function LightTable() {
   useEffect(() => {
     const onKey = (e) => {
       // shortcuts never fire with a modifier (Ctrl+S stays the browser's) or inside a form control
-      if (!res || e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('select, textarea, input')) return;
+      if (!res || e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('select, textarea, input, [role="slider"]')) return;
       const list = res.clouds, i = list.findIndex((c) => c.id === sel);
       if (list.length && (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j')) { select(list[(i + 1) % list.length]); e.preventDefault(); }
       if (list.length && (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k')) { select(list[i < 0 ? list.length - 1 : (i - 1 + list.length) % list.length]); e.preventDefault(); }
@@ -347,7 +366,7 @@ export default function LightTable() {
       if (!c) return;
       const d = decisions[sel] || {};
       if (/^[1-9]$/.test(e.key) && order.notes.some((n) => n.n === +e.key) && !(d.status === 'declared' && d.note === +e.key)) decide(sel, { status: 'declared', note: +e.key, signedBy: null, signedAt: null, valueOk: null });
-      if (e.key.toLowerCase() === 's' && (d.status === 'declared' || d.status === 'accepted') && !d.signedBy) {
+      if (e.key.toLowerCase() === 's' && (d.status === 'accepted' || (d.status === 'declared' && order.notes.some((n) => n.n === d.note))) && !d.signedBy) {
         if (!(d.status === 'declared' && !d.valueOk && valueSlip(c, order.notes.find((n) => n.n === d.note)?.text).length)) signOff(sel);
       }
     };
@@ -367,6 +386,7 @@ export default function LightTable() {
   const onPointerDown = (e) => { if (e.target.closest('.rl-swipe-handle')) return; drag.current = { x: e.clientX, y: e.clientY, cam: camRef.current, id: e.pointerId, el: e.currentTarget, moved: false }; };
   const onPointerMove = (e) => {
     const d = drag.current; if (!d) return;
+    if (!e.buttons) { drag.current = null; return; }
     if (!d.moved) { if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) return; d.moved = true; d.el.setPointerCapture?.(d.id); }
     setCam({ ...d.cam, x: d.cam.x + e.clientX - d.x, y: d.cam.y + e.clientY - d.y });
   };
@@ -526,7 +546,7 @@ function Shell({ order, gate, revs, saved, children }) {
             </span>
           </div>
         )}
-        <span className="rl-saved" aria-live="polite">{saved}</span>
+        <span className="rl-saved" aria-live="polite" title={saved}>{saved}</span>
         <button className="rl-close" onClick={closeModal} aria-label="Close the light table">Close</button>
       </header>
       {children}
@@ -633,7 +653,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
           {!order.notes.length && <li className="none">The work item has no numbered change notes. Number each change in the description, for example "1. Zone D3: bore Ø25 to Ø25.5".</li>}
         </ol>
       </section>
-      <NeedsYou res={res} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} />
+      <NeedsYou res={res} all={allClouds} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} />
       <section className="rl-found">
         <h2>Found on the sheet <span>{res.clouds.length}</span></h2>
         <ul>
@@ -744,12 +764,13 @@ function whatOf(todo, marks) {
   return [c && `${c} ${c === 1 ? 'change' : 'changes'}`, m && `${m} pen ${m === 1 ? 'markup' : 'markups'}`].filter(Boolean).join(', ');
 }
 
-function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect, readOnly }) {
+// what still needs an answer on every sheet compared so far, not just the one on the table
+function NeedsYou({ res, all, decisions, marks, markDecisions, sel, onSelect, readOnly }) {
   const todo = [
-    ...res.clouds.filter((c) => { const d = decisions[c.id] || {}; return d.status === 'rejected' ? false : !(d.status === 'declared' || d.status === 'accepted') || !d.signedBy; }),
+    ...(all || res.clouds).filter((c) => { const d = decisions[c.id] || {}; return d.status === 'rejected' ? false : !(d.status === 'declared' || d.status === 'accepted') || !d.signedBy; }),
     ...marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)),
   ];
-  const total = res.clouds.length + marks.length;
+  const total = (all || res.clouds).length + marks.length;
   if (!total) return null;
   const i = todo.findIndex((x) => x.id === sel);
   const next = todo[(i + 1) % todo.length];
@@ -806,6 +827,7 @@ function SetAside({ list, showing, onShow, onCountBack, readOnly }) {
 function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, onSign, readOnly }) {
   const list = res.clouds.filter((c) => c.housekeeping);
   const [open, setOpen] = useState(false);
+  useEffect(() => { if (sel && list.some((c) => c.id === sel)) setOpen(true); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!list.length) return null;
   // bulk accept only touches changes nobody has answered yet (never one sent back or declared), and only
   // once the list has been opened, so nothing is signed unseen
@@ -871,7 +893,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
           <p className="st">Sent back to the drafter. <button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null })}>Undo</button></p>
         ) : d.status === 'declared' || d.status === 'accepted' ? (
           <>
-            <p className="st">{d.status === 'declared' ? (notes.some((n) => n.n === d.note) ? <>Declared in note {d.note}</> : <>Declared in note {d.note}, which is no longer in the change notes. Declare it again.</>) : <>Accepted as a drawing correction</>}
+            <p className="st">{d.status === 'declared' ? (notes.some((n) => n.n === d.note) ? <>Declared in note {d.note}</> : <>Declared in note {d.note}, which is no longer in the change notes. Declare it again.</>) : c.kind === 'titleBlock' ? <>Released with the title block as it is</> : <>Accepted as a drawing correction</>}
               {' '}<button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null, signedBy: null, signedAt: null, valueOk: null })}>Change</button></p>
             {d.status === 'declared' && <ValueCheck c={c} d={d} note={notes.find((n) => n.n === d.note)} onDecide={onDecide} />}
             {d.signedBy ? <p className="signed">Signed off by {d.signedBy}, {new Date(d.signedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
@@ -880,15 +902,15 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
           </>
         ) : (
           <>
-            <p className="st warn">Not in the change notes</p>
-            {c.suggest && <p className="suggest">Near note {c.suggest}. <button className="link" onClick={() => onDecide(c.id, { status: 'declared', note: c.suggest })}>Declare in note {c.suggest}</button></p>}
+            <p className="st warn">{c.kind === 'titleBlock' ? 'The drawing does not name the revision it releases' : 'Not in the change notes'}</p>
+            {c.kind !== 'titleBlock' && c.suggest && <p className="suggest">Near note {c.suggest}. <button className="link" onClick={() => onDecide(c.id, { status: 'declared', note: c.suggest })}>Declare in note {c.suggest}</button></p>}
             <div className="rl-choices">
-              <select aria-label={`Declare change ${c.n} in a note`} value="" onChange={(e) => e.target.value && onDecide(c.id, { status: 'declared', note: +e.target.value })}>
+              {c.kind !== 'titleBlock' && <select aria-label={`Declare change ${c.n} in a note`} value="" onChange={(e) => e.target.value && onDecide(c.id, { status: 'declared', note: +e.target.value })}>
                 <option value="">Declare in note…</option>
                 {notes.map((n) => <option key={n.n} value={n.n}>Note {n.n}</option>)}
-              </select>
-              <button className="rl-btn" onClick={() => onDecide(c.id, { status: 'accepted', note: null })}>Accept as correction</button>
-              <button className="rl-btn danger" onClick={() => onDecide(c.id, { status: 'rejected', note: null })}>Send back</button>
+              </select>}
+              <button className="rl-btn" onClick={() => onDecide(c.id, { status: 'accepted', note: null })}>{c.kind === 'titleBlock' ? 'Release with this title block' : 'Accept as correction'}</button>
+              <button className="rl-btn danger" onClick={() => onDecide(c.id, { status: 'rejected', note: null })}>{c.kind === 'titleBlock' ? 'Send back to fix the title block' : 'Send back'}</button>
             </div>
           </>
         )}

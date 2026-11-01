@@ -7,7 +7,13 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 // dpi is a ceiling: large sheets (B to E size) are drawn at whatever resolution keeps the canvas under
 // maxPixels, because browsers refuse canvases much past 16 million pixels.
 export async function renderPage(bytes, pageNo = 1, dpi = 150, maxPixels = 16e6) {
-  const doc = await pdfjs.getDocument({ data: bytes, isEvalSupported: false }).promise;
+  const task = pdfjs.getDocument({ data: bytes, isEvalSupported: false });
+  const doc = await task.promise;
+  // the parsed document is released once the page is drawn and read, so many sheets do not pile up in memory
+  try { return await drawPage(doc, pageNo, dpi, maxPixels); } finally { task.destroy?.(); }
+}
+
+async function drawPage(doc, pageNo, dpi, maxPixels) {
   if (pageNo > doc.numPages) return { missing: true, pages: doc.numPages };
   const page = await doc.getPage(pageNo);
   const unit = page.getViewport({ scale: 1 });

@@ -144,12 +144,18 @@ resolver.define('saveReview', async (req) => {
     .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
   const [newA, newB] = pdfs.slice(-2);
   if (!newA || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'This review is not of the two newest drawing revisions. Reopen the light table to compare them.' };
+  if (r.engine !== ENGINE_VERSION) return { stale: true, error: 'This light table is out of date. Close it and open it again to load the current version of Redline.' };
   // A re-read is a review from this exact engine version replacing one from an older version: its changes
   // are found afresh, and each earlier decision belongs to the new change in the same place on the sheet.
   const sameRevs = stored && +stored.revA?.id === +r.revA.id && +stored.revB?.id === +r.revB.id;
   const reread = !!(sameRevs && stored.engine && stored.engine !== ENGINE_VERSION && r.engine === ENGINE_VERSION);
   const carried = reread ? matchChanges(stored.clouds, r.clouds) : {};
-  const beforeOf = (id) => stored?.decisions?.[reread ? carried[id] : id];
+  const storedCloud = new Map((stored?.clouds || []).map((c) => [c.id, c])), newCloud = new Map((r.clouds || []).map((c) => [c.id, c]));
+  const readsSame = (a, b) => !!a && !!b && a.kind === b.kind && (a.before ?? null) === (b.before ?? null) && (a.after ?? null) === (b.after ?? null) && JSON.stringify(a.values || []) === JSON.stringify(b.values || []);
+  // after a re-read, a decision (and its signature) follows its change only if the change still reads the same
+  const beforeOf = (id) => (reread ? (readsSame(storedCloud.get(carried[id]), newCloud.get(id)) ? stored.decisions?.[carried[id]] : undefined) : stored?.decisions?.[id]);
+  // the light table can save before it has read the photo again: the stored photo and its markups stand
+  if (sameRevs && !r.print && stored.print) { r.print = stored.print; r.marks = stored.marks || []; r.markDecisions = { ...(stored.markDecisions || {}), ...(r.markDecisions || {}) }; }
   // nothing changed since the last save (the light table saves once when it opens): no write, no audit entry
   if (sameRevs && !reread && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: stored.gate, decisions: stored.decisions };
   const me = await (await jira(route`/rest/api/3/myself`)).json();
@@ -193,8 +199,8 @@ resolver.define('saveReview', async (req) => {
   const heldSince = gate.blocked ? (stored?.gate?.status === 'blocked' && stored.heldSince ? stored.heldSince : now) : null;
   const review = { ...r, gate, heldSince, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
   // app storage keeps values up to 240 KiB: drop the set-aside list (it can be found again) before refusing
-  if (JSON.stringify(review).length > 230000) review.setAside = (review.setAside || []).slice(0, 20);
-  if (JSON.stringify(review).length > 230000) return { stale: true, error: 'This review is too large to save. Split the drawing into fewer sheets per change order.' };
+  if (Buffer.byteLength(JSON.stringify(review)) > 230000) review.setAside = (review.setAside || []).slice(0, 20);
+  if (Buffer.byteLength(JSON.stringify(review)) > 230000) return { stale: true, error: 'This review is too large to save. Split the drawing into fewer sheets per change order.' };
   await kvs.set(reviewKey(issue.id), review);
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   const audit = (await kvs.get(auditKey(issue.id))) || [];

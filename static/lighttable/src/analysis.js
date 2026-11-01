@@ -6,6 +6,7 @@ import { readMarkups } from './engine/markup.mjs';
 import { numbersIn } from '../../../shared/gate.mjs';
 import { withHousekeeping } from './engine/housekeeping.mjs';
 import { revisionOfName, titleBlockRevision } from './engine/titleblock.mjs';
+import { textChanges } from './engine/textdiff.mjs';
 
 export { ENGINE_VERSION } from '../../../shared/review.mjs';
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -222,6 +223,22 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
     .map((c, i) => withHousekeeping({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed,
       zone: zoneOf(c, A.w, A.h), move: moveOf(c.moved, dpi), ...textOf(c, hA.texts, hB.texts, r.transform, k), sameText: sameTextOf(c, hA.texts, hB.texts, r.transform, k),
       textShare: textShareOf(c, A, Bw, hA.texts, hB.texts, r.transform, k) }));
+  // Text the pixels missed: where both PDFs keep their text, a word or number that reads differently and
+  // lies outside every cloud is a change too (a one-letter or one-digit edit moves too little ink to see).
+  {
+    const [a, b, c, d, e, f] = r.transform, det = a * e - b * d || 1;
+    const toA = (x, y) => [(e * (x - c) - b * (y - f)) / det, (-d * (x - c) + a * (y - f)) / det];
+    const onA = (hA.texts || []).map((t) => ({ str: t.str, x0: t.x0 / k, y0: t.y0 / k, x1: t.x1 / k, y1: t.y1 / k }));
+    const onB = (hB.texts || []).map((t) => { const p = toA(t.x0 / k, t.y0 / k), q = toA(t.x1 / k, t.y1 / k); return { str: t.str, x0: Math.min(p[0], q[0]), y0: Math.min(p[1], q[1]), x1: Math.max(p[0], q[0]), y1: Math.max(p[1], q[1]) }; });
+    const covered = (t) => clouds.some((cl) => t.x1 >= cl.x0 - 6 && t.x0 <= cl.x1 + 6 && t.y1 >= cl.y0 - 6 && t.y0 <= cl.y1 + 6);
+    for (const t of textChanges(onA, onB)) {
+      if (covered(t)) continue;
+      const box = { x0: Math.max(0, Math.round(t.x0 - 4)), y0: Math.max(0, Math.round(t.y0 - 4)), x1: Math.min(A.w - 1, Math.round(t.x1 + 4)), y1: Math.min(A.h - 1, Math.round(t.y1 + 4)) };
+      const old = new Set(numbersIn(t.before));
+      clouds.push({ id: `c${clouds.length + 1}`, n: clouds.length + 1, ...box, kind: t.before && t.after ? 'changed' : t.after ? 'added' : 'removed', textOnly: true, zone: zoneOf(box, A.w, A.h),
+        before: t.before, after: t.after, values: [...new Set(numbersIn(t.after).filter((v) => !old.has(v)))], textShare: 1 });
+    }
+  }
   // The title block must name the revision this change order releases. A sheet whose title block still
   // reads the old letter is a change of its own, answered like any other; a letter that moved on as it
   // should is housekeeping.
@@ -236,7 +253,8 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
     clouds.push({ id: `c${clouds.length + 1}`, n: clouds.length + 1, ...box, kind: 'titleBlock', zone: zoneOf(box, A.w, A.h), titleBlock: { a: tA?.letter || null, b: tB.letter, expected } });
   } else if (expected && tB && tA && tA.letter !== tB.letter) {
     const bx = tB.box, hit = (cl) => cl.x1 >= bx.x0 / k - 4 && cl.x0 <= bx.x1 / k + 4 && cl.y1 >= bx.y0 / k - 4 && cl.y0 <= bx.y1 / k + 4;
-    for (const cl of clouds) if (hit(cl) && !cl.housekeeping && (cl.textShare ?? 0) >= 0.9) { cl.housekeeping = 'revLetter'; cl.revLetter = { a: tA.letter, b: tB.letter }; }
+    const onlyLetter = (cl) => cl.before !== undefined && cl.after !== undefined && cl.before.replace(new RegExp(`\\b${tA.letter}\\b`), '#') === cl.after.replace(new RegExp(`\\b${tB.letter}\\b`), '#');
+    for (const cl of clouds) if (hit(cl) && !cl.housekeeping && (cl.textShare ?? 0) >= 0.9 && onlyLetter(cl)) { cl.housekeeping = 'revLetter'; cl.revLetter = { a: tA.letter, b: tB.letter }; }
   }
   // differences the engine set aside as re-plot shifts (line work nudged under ~0.7 mm, matching once
   // shifted): not changes, but listed so a reviewer can see each one and count it back in

@@ -2,7 +2,10 @@
 // with "1." / "2)". Each becomes { n, text } so clouds can be declared against a line number.
 export function notesFromAdf(doc) {
   const notes = [];
-  const text = (node) => (node.type === 'text' ? node.text : (node.content || []).map(text).join(node.type === 'paragraph' ? '\n' : ''));
+  // words in one paragraph join as they read (bold or linked words are separate text nodes); a hard line
+  // break, or a new paragraph inside a list item, starts a new line
+  const text = (node) => (node.type === 'text' ? node.text : node.type === 'hardBreak' ? '\n'
+    : (node.content || []).map(text).join(node.type === 'listItem' || node.type === 'doc' ? '\n' : ''));
   const walk = (node) => {
     if (!node) return;
     if (node.type === 'orderedList') {

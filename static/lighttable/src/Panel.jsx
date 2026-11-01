@@ -91,7 +91,7 @@ export default function Panel() {
                   ? [<li key={`h${sh}`} className="sheet-head">Sheet {sh}</li>] : [];
                 const slip = d.status === 'declared' && !d.valueOk && valueSlip(c, o.notes?.find((n) => n.n === d.note)?.text).length;
                 const st = slip ? 'undeclared' : cloudStatus(d);
-                const label = d.status === 'rejected' ? 'Sent back' : slip ? `Value not in note ${d.note}` : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : 'Not in notes';
+                const label = d.status === 'rejected' ? 'Sent back' : slip ? `Value not in note ${d.note}` : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
                 return [...head, (
                   <li key={c.id} className={st}>
                     <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Open change ${c.n} in the light table`}>

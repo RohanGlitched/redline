@@ -32,7 +32,7 @@ export function matchChanges(oldClouds = [], newClouds = []) {
 // A save that changes nothing a person decided or the engine found is not written again.
 export function sameReview(a, b) {
   if (!a || !b) return false;
-  const pick = (r) => JSON.stringify([r.revA?.id, r.revB?.id, r.engine, r.clouds, r.sheets, r.marks, r.print, r.setAside,
+  const pick = (r) => JSON.stringify([r.revA?.id, r.revB?.id, r.engine, r.clouds, r.sheets, r.marks, r.print,
     Object.fromEntries(Object.entries(r.decisions || {}).map(([k, d]) => [k, [d.status, d.note ?? null, !!d.signedAt, !!d.valueOk]])),
     Object.fromEntries(Object.entries(r.markDecisions || {}).map(([k, d]) => [k, [d.status, d.note ?? null]]))]);
   return pick(a) === pick(b);

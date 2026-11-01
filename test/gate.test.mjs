@@ -192,3 +192,25 @@ test('the title block letter: split or joined words, lowest label wins, nothing 
     { str: 'Rev', x0: 900, y0: 760, x1: 925, y1: 775 }, { str: 'C', x0: 930, y0: 760, x1: 938, y1: 775 }], w, h).letter, 'C');
   assert.equal(titleBlockRevision([{ str: 'Rev', x0: 100, y0: 100, x1: 125, y1: 115 }, { str: 'D', x0: 130, y0: 100, x1: 138, y1: 115 }], w, h), null);
 });
+
+test('file names that only look like revisions are not read as one', () => {
+  for (const f of ['drawing_rev.pdf', 'bracket review.pdf', 'plate_revs.pdf', 'previous.pdf']) assert.equal(revisionOfName(f), null, f);
+  assert.equal(revisionOfName('part_rev_03.pdf'), '3');
+});
+
+test('a title block letter in the cell below the REV label is read', () => {
+  assert.equal(titleBlockRevision([{ str: 'REV', x0: 900, y0: 740, x1: 930, y1: 752 }, { str: 'D', x0: 908, y0: 758, x1: 918, y1: 772 }], 1000, 800).letter, 'D');
+  assert.equal(titleBlockRevision([{ str: 'REV', x0: 900, y0: 740, x1: 930, y1: 752 }, { str: '03', x0: 908, y0: 758, x1: 922, y1: 772 }], 1000, 800).letter, '3');
+});
+
+// ---------- text the pixels can miss ----------
+import { textChanges } from '../static/lighttable/src/engine/textdiff.mjs';
+
+test('a one-letter or one-digit text edit is a change; the same words split differently are not', () => {
+  const a = [{ str: 'Rev A', x0: 100, y0: 100, x1: 150, y1: 112 }, { str: 'Ø25.5 ±0.15', x0: 300, y0: 300, x1: 380, y1: 312 }, { str: 'BREAK ALL EDGES', x0: 500, y0: 500, x1: 600, y1: 512 }];
+  const b = [{ str: 'Rev', x0: 100, y0: 100, x1: 128, y1: 112 }, { str: 'B', x0: 132, y0: 100, x1: 142, y1: 112 },
+    { str: 'Ø25.6 ±0.15', x0: 301, y0: 300, x1: 381, y1: 312 }, { str: 'BREAK ALL', x0: 500, y0: 500, x1: 560, y1: 512 }, { str: 'EDGES', x0: 564, y0: 500, x1: 600, y1: 512 }];
+  const ch = textChanges(a, b);
+  assert.deepEqual(ch.map((c) => [c.before, c.after]), [['Rev A', 'Rev B'], ['Ø25.5 ±0.15', 'Ø25.6 ±0.15']]);
+  assert.deepEqual(textChanges([{ str: 'NOTE 4', x0: 0, y0: 0, x1: 40, y1: 10 }], []).map((c) => [c.before, c.after]), [['NOTE 4', '']]);
+});

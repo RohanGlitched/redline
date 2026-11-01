@@ -66,6 +66,8 @@ function moments(m) {
 // Forward-additive Lucas-Kanade on blurred ink maps over a pyramid.
 export function register(A, B, opts = {}) {
   const mA = moments(A), mB = moments(B);
+  // a sheet with no ink (a blank placeholder, or everything erased) cannot be lined up: compare as drawn
+  if (!(mA.r > 0) || !(mB.r > 0)) return [1, 0, 0, 0, 1, 0];
   const s0 = mB.r / mA.r;
   let p = [s0, 0, mB.cx - s0 * mA.cx, 0, s0, mB.cy - s0 * mA.cy];
   for (const f of opts.levels || [16, 8, 4, 2]) {
@@ -363,7 +365,8 @@ function bestNcc(a, b, w, h, c, shift, pad) {
       n++; sa += va; sb += vb; saa += va * va; sbb += vb * vb; sab += va * vb;
     }
     const cov = sab - sa * sb / n, va = saa - sa * sa / n, vb = sbb - sb * sb / n;
-    const r = va > 1e-9 && vb > 1e-9 ? cov / Math.sqrt(va * vb) : (va <= 1e-9 && vb <= 1e-9 ? 1 : 0);
+    // two flat patches match only when they are the same tone (white paper is not solid ink)
+    const r = va > 1e-9 && vb > 1e-9 ? cov / Math.sqrt(va * vb) : (va <= 1e-9 && vb <= 1e-9 && Math.abs(sa - sb) / n < 0.1 ? 1 : 0);
     if (r > best) best = r;
   }
   return best;
