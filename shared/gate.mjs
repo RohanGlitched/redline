@@ -40,7 +40,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   ].filter(Boolean);
   const text = parts.length ? parts.join('; ')
     : !clouds.length && !marks.length ? 'No differences found between the revisions'
-    : `All ${clouds.length} changes declared and signed off`;
+    : clouds.length === 1 ? 'The change is declared and signed off' : `All ${clouds.length} changes declared and signed off`;
   // the same reasons, short, for places with little room (the light table's header)
   const reasons = [
     unseen && { kind: 'unseen', n: unseen, short: `${unseen} ${unseen === 1 ? 'sheet' : 'sheets'} not compared` },

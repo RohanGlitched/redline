@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, closeModal, getFocus } from './bridge.js';
 import { matchChanges, overlap } from '../../../shared/review.mjs';
 import { revisionOfName } from './engine/titleblock.mjs';
+import { meaningOf } from './engine/meaning.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
 import { gateOf, valueSlip } from '../../../shared/gate.mjs';
@@ -172,7 +173,9 @@ export default function LightTable() {
     setPrint({ att, status: 'reading' });
     try {
       const photo = await loadPhoto(invoke, att);
-      const result = readPrint(photo, res);
+      // the print is of sheet 1: read it against sheet 1's comparison even when another sheet is on the table
+      const base = res.sheet === 1 ? res : analysed.current[1] ? { ...analysed.current[1], sheet: 1 } : res;
+      const result = readPrint(photo, base);
       if (result.error) { setPrint({ att, status: 'error', error: result.error }); return; }
       // markups belong to this photo: a new photo's P1 never inherits the answer given to an old one's
       result.marks = result.marks.map((k) => ({ ...k, id: `p${att.id}-${k.id}` }));
@@ -236,13 +239,25 @@ export default function LightTable() {
     } catch (e) { decideMark(m.id, { status: 'open', error: e.message }); }
   }
 
+  // Close never drops a decision: a save still waiting runs now, and one on its way is waited for
+  const closeSafely = async () => {
+    if (!readOnly && timerRef.current && runRef.current) { clearTimeout(timerRef.current); savePromise.current = runRef.current(); }
+    try { await savePromise.current; } catch { /* the save reports its own error */ }
+    closeModal();
+  };
+
   // Autosave the review. The backend keeps it in app storage, which the release validator reads.
   const allClouds = useMemo(() => Object.values(sheets.compared).flat(), [sheets]);
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
-  const gate = useMemo(() => gateOf(allClouds, decisions, marks, markDecisions, sheetInfo, order?.notes), [allClouds, decisions, marks, markDecisions, sheets, order]);
+  const gate = useMemo(() => {
+    const g = gateOf(allClouds, decisions, marks, markDecisions, sheetInfo, order?.notes);
+    const photoPending = (order?.images || []).length > 0 && (!print || print.status === 'reading');
+    return photoPending ? { ...g, blocked: true, reasons: [...(g.reasons || []), { kind: 'photo', short: 'photo not read yet' }], text: [g.parts?.length ? g.text : null, 'the photo of the print has not been read yet'].filter(Boolean).join('; ') } : g;
+  }, [allClouds, decisions, marks, markDecisions, sheets, order, print]);
   // Saves go one at a time: a decision made while a save is on its way waits for it, then saves with
   // the new version, so two quick decisions never look like someone else saving in between.
   const saving = useRef(false), pending = useRef(false);
+  const timerRef = useRef(null), runRef = useRef(null), savePromise = useRef(null);
   const [saveTick, setSaveTick] = useState(0);
   useEffect(() => {
     // a comparison that found nothing is a review too: it is saved so the release can go ahead
@@ -252,7 +267,8 @@ export default function LightTable() {
     // without its pen markups; it waits
     if (phase !== 'ready' || print?.status === 'reading' || (res.sheet === 1 && (order?.images || []).length && !print)) return;
     if (saving.current) { pending.current = true; return; }
-    const t = setTimeout(async () => {
+    const run = async () => {
+      timerRef.current = null;
       saving.current = true;
       setSaved('Saving');
       try {
@@ -298,7 +314,10 @@ export default function LightTable() {
         saving.current = false;
         if (pending.current) { pending.current = false; setSaveTick((x) => x + 1); }
       }
-    }, 500);
+    };
+    runRef.current = run;
+    const t = setTimeout(() => { savePromise.current = run(); }, 500);
+    timerRef.current = t;
     return () => clearTimeout(t);
   }, [decisions, res, markDecisions, print, sheets, aside, saveTick, phase]);
 
@@ -365,7 +384,7 @@ export default function LightTable() {
       const c = sel && allClouds.find((x) => x.id === sel);
       if (!c) return;
       const d = decisions[sel] || {};
-      if (/^[1-9]$/.test(e.key) && order.notes.some((n) => n.n === +e.key) && !(d.status === 'declared' && d.note === +e.key)) decide(sel, { status: 'declared', note: +e.key, signedBy: null, signedAt: null, valueOk: null });
+      if (/^[1-9]$/.test(e.key) && c.kind !== 'titleBlock' && order.notes.some((n) => n.n === +e.key) && !(d.status === 'declared' && d.note === +e.key)) decide(sel, { status: 'declared', note: +e.key, signedBy: null, signedAt: null, valueOk: null });
       if (e.key.toLowerCase() === 's' && (d.status === 'accepted' || (d.status === 'declared' && order.notes.some((n) => n.n === d.note))) && !d.signedBy) {
         if (!(d.status === 'declared' && !d.valueOk && valueSlip(c, order.notes.find((n) => n.n === d.note)?.text).length)) signOff(sel);
       }
@@ -397,15 +416,15 @@ export default function LightTable() {
     setCam({ s, x: px - ((px - c.x) / c.s) * s, y: py - ((py - c.y) / c.s) * s });
   };
 
-  if (error) return <Shell order={order}><div className="rl-empty"><h2>Redline can't compare this change order yet</h2><p>{error}</p></div></Shell>;
-  if (!res) return <Shell order={order}><Warmup stage={stage} /></Shell>;
+  if (error) return <Shell onClose={closeSafely} order={order}><div className="rl-empty"><h2>Redline can't compare this change order yet</h2><p>{error}</p></div></Shell>;
+  if (!res) return <Shell onClose={closeSafely} order={order}><Warmup stage={stage} /></Shell>;
 
   const { A } = res;
   const shown = mode === 'blink' ? (blinkOn ? 'b' : 'a') : mode;
   const lit = phase !== 'dark';
 
   return (
-    <Shell order={order} gate={gate} revs={[res.revA, res.revB]} saved={saved}>
+    <Shell onClose={closeSafely} order={order} gate={gate} revs={[res.revA, res.revB]} saved={saved}>
       <div className="rl-body">
         <section className="rl-table" aria-label="Light table">
           <div className="rl-modes" role="tablist" aria-label="Compare mode">
@@ -527,7 +546,7 @@ function cropJpeg(flat, m) {
   return c.toDataURL('image/jpeg', 0.88).split(',')[1];
 }
 
-function Shell({ order, gate, revs, saved, children }) {
+function Shell({ order, gate, revs, saved, onClose = closeModal, children }) {
   return (
     <div className="rl-app">
       <header className="rl-head">
@@ -547,7 +566,7 @@ function Shell({ order, gate, revs, saved, children }) {
           </div>
         )}
         <span className="rl-saved" aria-live="polite" title={saved}>{saved}</span>
-        <button className="rl-close" onClick={closeModal} aria-label="Close the light table">Close</button>
+        <button className="rl-close" onClick={onClose} aria-label="Close the light table">Close</button>
       </header>
       {children}
     </div>
@@ -888,6 +907,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
             : <><span className="old">{c.before}</span><span aria-hidden="true"> → </span><span className="sr">changes to </span><span className="new">{c.after}</span></>}
         </p>
       )}
+      {meaningOf(c.before, c.after).map((m) => <p key={m.kind} className={`rl-meaning ${m.tighter ? 'tighter' : ''}`}>{m.text}</p>)}
       <div className="rl-row-act">
         {state === 'rejected' ? (
           <p className="st">Sent back to the drafter. <button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null })}>Undo</button></p>

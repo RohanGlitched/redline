@@ -3,7 +3,7 @@
 
 // The comparison engine's version. The backend accepts a review that re-reads the drawings from scratch
 // only from exactly this version, so a browser cannot claim a made-up newer engine to drop changes.
-export const ENGINE_VERSION = 'redline-core 0.4';
+export const ENGINE_VERSION = 'redline-core 0.5';
 
 // How much of the smaller of two boxes ([x0, y0, x1, y1]) the other covers, 0 to 1.
 export function overlap(p, q) {

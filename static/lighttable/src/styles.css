@@ -350,3 +350,7 @@ button { font: inherit; color: inherit; }
 
 /* gadget: the reasons as the light table's pills */
 .why.pills { display: flex; flex-wrap: wrap; gap: 4px; color: var(--rl-danger-text, #ae2e24); }
+
+/* what a changed callout means: a tighter tolerance is a cost and inspection question, so it stands out */
+.rl-meaning { margin: 2px 0 0; font-size: 12px; font-weight: 600; color: var(--rl-text); }
+.rl-meaning.tighter { color: var(--rl-danger-text, #ae2e24); }

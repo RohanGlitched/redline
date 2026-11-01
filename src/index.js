@@ -5,6 +5,7 @@ import { gateOf, verdictOf, valueSlip } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 import { ENGINE_VERSION, matchChanges, sameReview } from '../shared/review.mjs';
 import { revisionOfName } from '../static/lighttable/src/engine/titleblock.mjs';
+import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
 
 export { verdictOf, notesFromAdf };
 
@@ -144,7 +145,7 @@ resolver.define('saveReview', async (req) => {
   const pdfs = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf')
     .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
   const [newA, newB] = pdfs.slice(-2);
-  if (!newA || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'This review is not of the two newest drawing revisions. Reopen the light table to compare them.' };
+  if (!newA || !newB || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'This review is not of the two newest drawing revisions. Reopen the light table to compare them.' };
   if (r.engine !== ENGINE_VERSION) return { stale: true, error: 'This light table is out of date. Close it and open it again to load the current version of Redline.' };
   // A re-read is a review from this exact engine version replacing one from an older version: its changes
   // are found afresh, and each earlier decision belongs to the new change in the same place on the sheet.
@@ -156,7 +157,8 @@ resolver.define('saveReview', async (req) => {
   // after a re-read, a decision (and its signature) follows its change only if the change still reads the same
   const beforeOf = (id) => (reread ? (readsSame(storedCloud.get(carried[id]), newCloud.get(id)) ? stored.decisions?.[carried[id]] : undefined) : stored?.decisions?.[id]);
   // the light table can save before it has read the photo again: the stored photo and its markups stand
-  if (sameRevs && !r.print && stored.print) { r.print = stored.print; r.marks = stored.marks || []; r.markDecisions = { ...(stored.markDecisions || {}), ...(r.markDecisions || {}) }; }
+  const stillAttached = (id) => (issue.fields.attachment || []).some((a) => +a.id === +id);
+  if (sameRevs && !r.print && stored.print && stillAttached(stored.print.id)) { r.print = stored.print; r.marks = stored.marks || []; r.markDecisions = { ...(stored.markDecisions || {}), ...(r.markDecisions || {}) }; }
   // nothing changed since the last save (the light table saves once when it opens): no write, no audit entry
   if (sameRevs && !reread && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: stored.gate, decisions: stored.decisions };
   const me = await (await jira(route`/rest/api/3/myself`)).json();
@@ -204,9 +206,14 @@ resolver.define('saveReview', async (req) => {
   if (Buffer.byteLength(JSON.stringify(review)) > 230000) return { stale: true, error: 'This review is too large to save. Split the drawing into fewer sheets per change order.' };
   // two reviewers saving from the same version at once: each save first claims its version number, and only
   // one claim can exist, so the second gets "someone else just saved" instead of silently overwriting
-  try { await kvs.set(`claim:${issue.id}:${review.version}`, now, { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: 1, unit: 'HOURS' } }); }
-  catch { return { conflict: true, review: (await kvs.get(reviewKey(issue.id))) || stored }; }
-  await kvs.set(reviewKey(issue.id), review);
+  const claim = `claim:${issue.id}:${review.version}`;
+  try { await kvs.set(claim, now, { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: 1, unit: 'HOURS' } }); }
+  catch (e) {
+    // only an existing claim means someone else saved this version; any other storage error is reported as such
+    if (await kvs.get(claim).catch(() => null)) return { conflict: true, review: (await kvs.get(reviewKey(issue.id))) || stored || { version: 0, decisions: {} } };
+    throw e;
+  }
+  try { await kvs.set(reviewKey(issue.id), review); } catch (e) { await kvs.delete(claim).catch(() => {}); throw e; }
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   const audit = (await kvs.get(auditKey(issue.id))) || [];
   audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed, ...(reread ? { reread: `${stored.engine} -> ${r.engine}, ${stored.clouds?.length || 0} -> ${r.clouds?.length || 0} changes` } : {}) });
@@ -248,12 +255,13 @@ resolver.define('raiseMarkup', async (req) => {
       description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] } } }),
   })).json();
   if (!created.key) throw new Error('Jira did not create the markup work item');
-  await jira(route`/rest/api/3/issueLink`, {
+  // the work item exists now: a link or crop that fails is reported, never retried into a duplicate
+  const linked = await jira(route`/rest/api/3/issueLink`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type: { name: 'Relates' }, inwardIssue: { key: created.key }, outwardIssue: { key: eco } }),
-  });
-  if (crop) await attach(created.key, `markup-zone-${zone}.jpg`, 'image/jpeg', crop);
-  return { key: created.key };
+  }).then(() => true).catch(() => false);
+  if (crop) await attach(created.key, `markup-zone-${zone}.jpg`, 'image/jpeg', crop).catch(() => {});
+  return { key: created.key, linked };
 });
 
 // A judge or new user on an empty site can add the bundled sample change order (two public-domain
@@ -314,6 +322,7 @@ function describe(o) {
       return {
         change: c.n, zone: c.zone, kind: c.kind,
         drawingTextBefore: c.before || undefined, drawingTextAfter: c.after || undefined,
+        whatChanged: meaningOf(c.before, c.after).map((m) => m.text).join('; ') || undefined,
         status: d.status === 'declared' ? (note ? `declared in note ${d.note}` : `declared in note ${d.note}, which is no longer in the description`) : d.status === 'accepted' ? 'accepted as a drawing correction' : d.status === 'rejected' ? 'sent back to the drafter' : 'not in the change notes',
         valueCheck: slip.length ? (d.valueOk ? `drawing value ${slip.join(', ')} differs from the note; confirmed as right by ${d.valueOk.by}` : `drawing value ${slip.join(', ')} is not what note ${d.note} says`) : undefined,
         signedOffBy: d.signedBy || null,
@@ -415,7 +424,8 @@ export async function onIssueUpdated(event) {
   if (!review) {
     // (only PDFs named as drawing revisions, "BRKT-0142_rev-C.pdf": two invoices on a work item are not a change order)
     const pdfs = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf' && revisionOfName(a.filename));
-    if (pdfs.length < 2) return;
+    // fewer than two revisions again (one was removed): the "not compared" flag goes too
+    if (pdfs.length < 2) { await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'DELETE' }).catch(() => {}); return; }
     await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ gate: { status: 'blocked', text: 'the two latest drawing revisions have not been compared yet', open: 0 } }),

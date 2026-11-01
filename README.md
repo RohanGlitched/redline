@@ -4,16 +4,17 @@
 
 An engineering change order says what changed on a drawing: *"bore Ø25 becomes Ø25.5"*. The drawing that comes back from the drafter often changes more than that. A hole moves 3 mm, a note disappears, a tolerance tightens. Nobody writes it down, a checker comparing two prints by eye misses it, and the part gets made wrong.
 
-Redline is a Forge app for Jira that compares the two newest PDF revisions attached to a change order and does four things:
+Redline is a Forge app for Jira that compares the two newest PDF revisions attached to a change order and does five things:
 
 - clouds every change between them, the way a drafter marks a revision;
 - matches each change to the numbered change notes in the description, and checks the values: if note 1 says Ø25.5 and the drawing now says Ø25.6, the release waits;
 - holds the release transition until every change is declared and signed off;
-- reads a phone photo of a marked-up print and lists every red-pen markup on it, so comments from the shop floor need an answer too.
+- reads a phone photo of a marked-up print and lists every red-pen markup on it, so comments from the shop floor need an answer too;
+- checks the title block names the revision being released.
 
 The comparison runs in the browser inside Jira. Drawings never leave Atlassian, and the comparison calls no AI service.
 
-It is for the people who sign off drawing changes: design checkers, quality engineers and manufacturing engineers at companies that run engineering change orders in Jira, typically hardware teams and contract manufacturers without a separate PLM system.
+It is for the people who sign off drawing changes: design checkers, quality engineers and manufacturing engineers at companies that run engineering change orders in Jira, typically hardware teams and contract manufacturers without a separate PLM system. They exist and they are asking: on Atlassian's Community, an engineer who runs change requests and change orders in Jira asked how to tie them to the drawings in SolidWorks PDM or Autodesk Vault ([May 2024](https://community.atlassian.com/forums/discussion/2705268/integrating-jira-with-solidworks-pdm-or-autodesk-vault)), noting that "lots of teams in manufacturing are using Jira, yet no out of the box integration"; an Atlassian expert replied that he knew of no app doing it, and others were still asking in 2025. An earlier thread asked for an app to manage change orders with document versions and approvals in Jira ([2021](https://community.atlassian.com/forums/discussion/1844107/eco-management-in-jira)).
 
 ## What it does in Jira
 

@@ -160,7 +160,7 @@ test('after a re-read, each earlier change is matched once, to the new change in
   assert.equal(Object.values(m).filter((o) => o === 's1-c1').length, 1); // never handed to two changes
   assert.equal(m['s1-c4'], undefined); // a new change starts open
   assert.ok(!Object.values(m).includes('s2-c1')); // other sheets are never matched
-  assert.equal(ENGINE_VERSION, 'redline-core 0.4');
+  assert.equal(ENGINE_VERSION, 'redline-core 0.5');
 });
 
 test('a save that changes nothing is recognised; any decision or finding change is not', () => {
@@ -204,7 +204,7 @@ test('a title block letter in the cell below the REV label is read', () => {
 });
 
 // ---------- text the pixels can miss ----------
-import { textChanges } from '../static/lighttable/src/engine/textdiff.mjs';
+import { textChanges, bothReadable } from '../static/lighttable/src/engine/textdiff.mjs';
 
 test('a one-letter or one-digit text edit is a change; the same words split differently are not', () => {
   const a = [{ str: 'Rev A', x0: 100, y0: 100, x1: 150, y1: 112 }, { str: 'Ø25.5 ±0.15', x0: 300, y0: 300, x1: 380, y1: 312 }, { str: 'BREAK ALL EDGES', x0: 500, y0: 500, x1: 600, y1: 512 }];
@@ -213,4 +213,34 @@ test('a one-letter or one-digit text edit is a change; the same words split diff
   const ch = textChanges(a, b);
   assert.deepEqual(ch.map((c) => [c.before, c.after]), [['Rev A', 'Rev B'], ['Ø25.5 ±0.15', 'Ø25.6 ±0.15']]);
   assert.deepEqual(textChanges([{ str: 'NOTE 4', x0: 0, y0: 0, x1: 40, y1: 10 }], []).map((c) => [c.before, c.after]), [['NOTE 4', '']]);
+});
+
+// ---------- what a changed callout means ----------
+import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
+
+test('a changed callout is described in engineering terms', () => {
+  assert.deepEqual(meaningOf('Ø25 ±0.15', 'Ø25.5 ±0.15').map((m) => m.text), ['Diameter 25 to 25.5 (+0.5)']);
+  assert.deepEqual(meaningOf('Ø25.5 ±0.15', 'Ø25.5 ±0.05').map((m) => m.text), ['Tolerance tightened: ±0.15 to ±0.05']);
+  assert.deepEqual(meaningOf('R3', 'R5').map((m) => m.text), ['Radius 3 to 5 (+2)']);
+  assert.deepEqual(meaningOf('1/4-20 UNC-2B', '5/16-18 UNC-2B').map((m) => m.text), ['Thread changed: 1/4-20 UNC to 5/16-18 UNC']);
+  assert.deepEqual(meaningOf('60° ±0.5', '45° ±0.5').map((m) => m.text), ['Angle 60 to 45 (-15)']);
+  assert.deepEqual(meaningOf('NOTE 4', 'NOTE 5'), []);
+});
+
+test('words are only compared when both revisions keep readable text, and read line by line', () => {
+  const a = [{ str: 'BORE', x0: 0, y0: 0, x1: 30, y1: 10 }, { str: 'DEPTH', x0: 40, y0: 0, x1: 70, y1: 10 }, { str: 'NOTE', x0: 0, y0: 50, x1: 30, y1: 60 }];
+  assert.equal(bothReadable(a, []), false); // a scan
+  assert.equal(bothReadable(a, [{ str: 'x', x0: 0, y0: 0, x1: 1, y1: 1 }, { str: 'y', x0: 0, y0: 0, x1: 1, y1: 1 }, { str: 'z', x0: 0, y0: 0, x1: 1, y1: 1 }]), false); // outlined text, other words
+  assert.equal(bothReadable(a, a), true);
+  // a taller word on the same line does not reorder the line
+  assert.deepEqual(textChanges([{ str: 'Ø25', x0: 0, y0: 2, x1: 20, y1: 10 }, { str: 'THRU', x0: 22, y0: 0, x1: 50, y1: 12 }],
+    [{ str: 'Ø25 THRU', x0: 0, y0: 1, x1: 50, y1: 11 }]), []);
+});
+
+test('symbol and ligature variants read the same', () => {
+  assert.deepEqual(textChanges([{ str: '2× ∅6.5 ﬁt', x0: 0, y0: 0, x1: 60, y1: 10 }], [{ str: '2x Ø6.5 fit', x0: 0, y0: 0, x1: 60, y1: 10 }]), []);
+});
+
+test('numbered screw threads are threads too', () => {
+  assert.deepEqual(meaningOf('#10-32 UNF', '#8-32 UNC').map((m) => m.text), ['Thread changed: #10-32 UNF to #8-32 UNC']);
 });
