@@ -381,7 +381,7 @@ export default function LightTable() {
         <section className="rl-table" aria-label="Light table">
           <div className="rl-modes" role="tablist" aria-label="Compare mode">
             {[...MODES, ...(print?.status === 'done' && res.sheet === 1 ? [{ key: 'print', label: 'Marked-up print', hint: 'The phone photo, flattened onto the sheet' }] : [])].map((m) => (
-              <button key={m.key} role="tab" aria-selected={mode === m.key} title={m.hint} className={mode === m.key ? 'on' : ''} onClick={() => setMode(m.key)}>{m.label}</button>
+              <button key={m.key} role="tab" aria-selected={mode === m.key} title={m.hint} className={mode === m.key ? 'on' : ''} onClick={() => setMode(m.key)}>{m.key === 'a' ? revName(res.revA) : m.key === 'b' ? revName(res.revB) : m.label}</button>
             ))}
             <span className="rl-legend" aria-hidden={mode !== 'overlay'} data-on={mode === 'overlay'}>
               <i className="sw g" />In both <i className="sw r" />Removed <i className="sw b" />Added
@@ -525,7 +525,8 @@ function Shell({ order, gate, revs, saved, children }) {
   );
 }
 
-const revName = (a) => (a.filename.match(/rev[-_ ]?([A-Z0-9]+)/i)?.[1] ? 'Rev ' + a.filename.match(/rev[-_ ]?([A-Z0-9]+)/i)[1].toUpperCase() : a.filename);
+// "BRKT-0142_rev-D.pdf" -> "Rev D"; a name with no revision in it is shown as it is
+const revName = (a) => { const m = a.filename.match(/(?:^|[^a-z])rev(?:ision)?[-_ .]?([A-Z0-9]{1,3})(?![a-z])/i); return m ? `Rev ${m[1].toUpperCase()}` : a.filename; };
 
 function Warmup({ stage }) {
   return (
