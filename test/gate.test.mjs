@@ -1,7 +1,7 @@
 // Unit tests for the release verdict and change-note parsing. Run with: npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 const pdf = (id, created) => ({ id: String(id), mimeType: 'application/pdf', created });
@@ -286,4 +286,15 @@ test('text split into different runs is still compared', () => {
 test('a review document is not a drawing revision', () => {
   assert.equal(drawingOf('design-review.pdf'), null);
   assert.equal(drawingOf('HSG-0207 Rev 3.pdf'), 'hsg-0207');
+});
+
+test('a value the note promises but the drawing does not show holds the release', () => {
+  const note = [{ n: 1, text: 'Zone D2: bore Ø25 ±0.15 becomes Ø25.5 ±0.1' }];
+  const c = [{ id: 'c1', before: 'Ø25 ±0.15', after: 'Ø25 ±0.1', values: [0.1] }]; // only the tolerance was changed
+  assert.deepEqual(noteSlip(c[0], note[0].text), [25.5]);
+  assert.equal(gateOf(c, { c1: { status: 'declared', note: 1, signedBy: 'Asha' } }, [], {}, null, note).mismatched, 1);
+  // the drawing does what the note says: no slip either way
+  assert.deepEqual(noteSlip({ before: 'Ø25 ±0.15', after: 'Ø25.5 ±0.1' }, note[0].text), []);
+  // a note about something else is not read against this text
+  assert.deepEqual(noteSlip({ before: 'R3', after: 'R4' }, note[0].text), []);
 });

@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { gateOf, verdictOf, valueSlip, noteKey } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, noteSlip, noteKey } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 import { ENGINE_VERSION, matchChanges, sameReview } from '../shared/review.mjs';
 import { revisionOfName } from '../static/lighttable/src/engine/titleblock.mjs';
@@ -328,12 +328,14 @@ function describe(o) {
       const d = r.decisions?.[c.id] || {};
       const note = o.notes.find((n) => n.n === d.note);
       const slip = d.status === 'declared' ? valueSlip(c, note?.text) : [];
+      const promised = d.status === 'declared' ? noteSlip(c, note?.text) : [];
       return {
         change: c.n, zone: c.zone, kind: c.kind,
         drawingTextBefore: c.before || undefined, drawingTextAfter: c.after || undefined,
         whatChanged: meaningOf(c.before, c.after).map((m) => m.text).join('; ') || undefined,
         status: d.status === 'declared' ? (note ? `declared in note ${d.note}` : `declared in note ${d.note}, which is no longer in the description`) : d.status === 'accepted' ? 'accepted as a drawing correction' : d.status === 'rejected' ? 'sent back to the drafter' : 'not in the change notes',
-        valueCheck: slip.length ? (d.valueOk ? `drawing value ${slip.join(', ')} differs from the note; confirmed as right by ${d.valueOk.by}` : `drawing value ${slip.join(', ')} is not what note ${d.note} says`) : undefined,
+        valueCheck: slip.length ? (d.valueOk ? `drawing value ${slip.join(', ')} differs from the note; confirmed as right by ${d.valueOk.by}` : `drawing value ${slip.join(', ')} is not what note ${d.note} says`)
+          : promised.length ? (d.valueOk ? `note ${d.note} says ${promised.join(', ')}, which the drawing does not show; confirmed as right by ${d.valueOk.by}` : `note ${d.note} says ${promised.join(', ')}, which the drawing does not show`) : undefined,
         signedOffBy: d.signedBy || null,
       };
     }),

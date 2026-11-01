@@ -46,7 +46,7 @@ The ledger lists each change with before-and-after crops; a change whose content
 4. It groups changed ink into blobs. On noisy scans it takes a second, contrast-blind look at each blob.
 5. It merges edits within about 7 mm into one cloud and names its zone on an 8 by 6 grid laid out like an ASME drawing border (columns numbered from the right, rows lettered from the bottom), so *"Zone D2"* in a change note links to the change in D2.
 
-A note claims a change outright only when that change is the only one in the zone it names. Anything less certain is shown as a suggestion that a person confirms. That way an undeclared edit can never hide behind a declared one next to it.
+A note claims a change outright only when that change is the only one in the zone it names. Anything less certain is shown as a suggestion that a person confirms. That way an undeclared edit in its own place never hides behind a declared one next to it. Two edits within about 7 mm are clouded together, as a drafter would; the crop shows both, and the value check reads the cloud's text against the note both ways (a value the drawing has that the note does not, and a value the note promises that the drawing does not show).
 
 The engine is plain JavaScript with no dependencies: [`static/lighttable/src/engine/`](static/lighttable/src/engine/).
 

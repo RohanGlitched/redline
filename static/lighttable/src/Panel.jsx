@@ -1,7 +1,7 @@
 // The issue panel: the release gate in one sentence, the changes by zone, and the way into the light table.
 import { useEffect, useState } from 'react';
 import { invoke, openLightTable } from './bridge.js';
-import { gateOf, valueSlip } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip, slipOf } from '../../../shared/gate.mjs';
 import { cloudPath } from './cloud.js';
 
 export default function Panel() {
@@ -90,7 +90,7 @@ export default function Panel() {
                 const sh = c.sheet || 1;
                 const head = multi && sh !== (r.clouds[i - 1]?.sheet || 1) || (multi && i === 0)
                   ? [<li key={`h${sh}`} className="sheet-head">Sheet {sh}</li>] : [];
-                const slip = d.status === 'declared' && !d.valueOk && valueSlip(c, o.notes?.find((n) => n.n === d.note)?.text).length;
+                const slip = d.status === 'declared' && !d.valueOk && slipOf(c, o.notes?.find((n) => n.n === d.note)?.text);
                 const st = slip ? 'undeclared' : cloudStatus(d);
                 const label = d.status === 'rejected' ? 'Sent back' : slip ? `Value not in note ${d.note}` : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
                 return [...head, (
@@ -118,7 +118,7 @@ export default function Panel() {
 }
 
 // a declared change whose drawing value its note does not state is drawn as needing attention
-const shownStatus = (c, d, notes) => (d.status === 'declared' && !d.valueOk && valueSlip(c, notes?.find((n) => n.n === d.note)?.text).length ? 'undeclared' : cloudStatus(d));
+const shownStatus = (c, d, notes) => (d.status === 'declared' && !d.valueOk && slipOf(c, notes?.find((n) => n.n === d.note)?.text) ? 'undeclared' : cloudStatus(d));
 const cloudStatus = (d) => (d.status === 'rejected' ? 'rejected' : d.status === 'declared' || d.status === 'accepted' ? (d.signedBy ? 'signed' : 'declared') : 'undeclared');
 
 // Revision B of one sheet, as a diazo print, with every change clouded in the colour of its decision.

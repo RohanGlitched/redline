@@ -18,6 +18,20 @@ export const noteKey = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 
 // extra.setAside: how many differences the engine set aside as re-plot shifts. A review that found nothing, or
 // set something aside, needs one person to confirm it (decisions.__ack), so no release clears with nobody looking.
+// The other way round: a value the note promises that the drawing does not show. The note says Ø25.5 and
+// the drawing still says Ø25 (only the tolerance was changed). Only for a note that is about this text: it has
+// to mention one of the values the drawing had before. Returns the promised values the drawing is missing.
+export function noteSlip(cloud, noteText) {
+  if (!cloud?.before || !cloud?.after || noteText == null) return [];
+  const said = numbersIn(String(noteText).replace(/\b(zones?|sheets?)\s+[A-Z]?\d{1,3}(\s*(,|and|&)\s*[A-Z]?\d{1,3})*/gi, ' '));
+  const before = numbersIn(cloud.before), after = numbersIn(cloud.after);
+  if (!said.some((v) => before.includes(v))) return [];
+  return [...new Set(said.filter((v) => !before.includes(v) && !after.includes(v)))];
+}
+
+// Either way round: the drawing and its note disagree about a value.
+export const slipOf = (cloud, noteText) => valueSlip(cloud, noteText).length + noteSlip(cloud, noteText).length > 0;
+
 export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, sheets = null, notes = null, extra = {}) {
   let open = 0, unsigned = 0, rejected = 0, mismatched = 0, noteChanged = 0;
   for (const c of clouds) {
@@ -28,7 +42,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     else if (d.status === 'declared' && notes && !note) open++;
     // a signature is for the note as it read when signed: a rewritten (or renumbered) note needs signing again
     else if (note && d.signedBy && d.noteText != null && noteKey(note.text) !== d.noteText) noteChanged++;
-    else if (d.status === 'declared' && notes && !d.valueOk && valueSlip(c, notes.find((n) => n.n === d.note)?.text).length) mismatched++;
+    else if (d.status === 'declared' && notes && !d.valueOk && slipOf(c, notes.find((n) => n.n === d.note)?.text)) mismatched++;
     else if (!d.signedBy) unsigned++;
   }
   // a pen markup from the floor needs an answer too: raised as a work item, covered by a change, or dismissed

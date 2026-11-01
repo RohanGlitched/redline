@@ -7,7 +7,7 @@ import { revisionOfName } from './engine/titleblock.mjs';
 import { meaningOf } from './engine/meaning.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
-import { gateOf, valueSlip, noteKey } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip, noteSlip, slipOf, noteKey } from '../../../shared/gate.mjs';
 
 const MODES = [
   { key: 'overlay', label: 'Overlay', hint: 'Shared lines in graphite, removed in red, added in blue' },
@@ -399,7 +399,7 @@ export default function LightTable() {
       const d = decisions[sel] || {};
       if (/^[1-9]$/.test(e.key) && c.kind !== 'titleBlock' && order.notes.some((n) => n.n === +e.key) && !(d.status === 'declared' && d.note === +e.key)) decide(sel, { status: 'declared', note: +e.key, signedBy: null, signedAt: null, valueOk: null });
       if (e.key.toLowerCase() === 's' && (d.status === 'accepted' || (d.status === 'declared' && order.notes.some((n) => n.n === d.note))) && !d.signedBy) {
-        if (!(d.status === 'declared' && !d.valueOk && valueSlip(c, order.notes.find((n) => n.n === d.note)?.text).length)) signOff(sel);
+        if (!(d.status === 'declared' && !d.valueOk && slipOf(c, order.notes.find((n) => n.n === d.note)?.text))) signOff(sel);
       }
     };
     addEventListener('keydown', onKey); return () => removeEventListener('keydown', onKey);
@@ -526,13 +526,15 @@ export default function LightTable() {
 // appear in the note the change is declared in. A slip ("note says Ø25.5, drawing says Ø25.6") holds the
 // release until someone confirms the drawing is right or sends it back.
 function ValueCheck({ c, d, note, onDecide }) {
-  if (!c.values?.length || !note) return null;
-  const slip = valueSlip(c, note.text);
-  if (!slip.length) return <p className="rl-value ok">Values match note {note.n}: {c.values.join(', ')}</p>;
-  if (d.valueOk) return <p className="rl-value ok">Drawing value {slip.join(', ')} confirmed against note {note.n} by {d.valueOk.by}</p>;
+  if (!note || (!c.values?.length && !c.before)) return null;
+  const slip = valueSlip(c, note.text), promised = noteSlip(c, note.text);
+  if (!slip.length && !promised.length) return c.values?.length ? <p className="rl-value ok">Values match note {note.n}: {c.values.join(', ')}</p> : null;
+  if (d.valueOk) return <p className="rl-value ok">Drawing confirmed against note {note.n} by {d.valueOk.by}</p>;
   return (
     <div className="rl-value slip" role="alert">
-      <p><b>Drawing says {slip.join(', ')}; note {note.n} does not.</b> Note {note.n}: “{note.text}”</p>
+      <p>{slip.length > 0 && <b>Drawing says {slip.join(', ')}; note {note.n} does not. </b>}
+        {promised.length > 0 && <b>Note {note.n} says {promised.join(', ')}; the drawing does not. </b>}
+        Note {note.n}: “{note.text}”</p>
       <div className="rl-choices">
         <button className="rl-btn" onClick={() => onDecide(c.id, { valueOk: { by: 'you', at: new Date().toISOString() } })}>The drawing is right</button>
         <button className="rl-btn danger" onClick={() => onDecide(c.id, { status: 'rejected', note: null })}>Send back</button>
@@ -954,7 +956,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
             {d.signedBy && d.status === 'declared' && d.noteText != null && notes.some((n) => n.n === d.note) && noteKey(notes.find((n) => n.n === d.note).text) !== d.noteText
               ? <><p className="rl-warn">Note {d.note} was edited after {d.signedBy} signed it off.</p><button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off again</button></>
               : d.signedBy ? <p className="signed">Signed off by {d.signedBy}, {new Date(d.signedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
-              : (d.status === 'declared' && (!notes.some((n) => n.n === d.note) || (!d.valueOk && valueSlip(c, notes.find((n) => n.n === d.note)?.text).length))) ? null
+              : (d.status === 'declared' && (!notes.some((n) => n.n === d.note) || (!d.valueOk && slipOf(c, notes.find((n) => n.n === d.note)?.text)))) ? null
               : <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>}
           </>
         ) : (
