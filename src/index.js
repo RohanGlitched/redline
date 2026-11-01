@@ -34,7 +34,7 @@ export async function loadChangeOrder(key) {
     .map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, author: a.author?.displayName }));
   const images = (issue.fields.attachment || [])
     .filter((a) => /^image\/(jpeg|png|webp)$/.test(a.mimeType))
-    .sort((x, y) => x.created.localeCompare(y.created))
+    .sort((x, y) => x.created.localeCompare(y.created) || +x.id - +y.id)
     .map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, mimeType: a.mimeType, author: a.author?.displayName }));
   return {
     key: issue.key,
@@ -147,7 +147,12 @@ resolver.define('saveReview', async (req) => {
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
   // an earlier comparison found, and what was found about a change (its box, text and values) stays as
   // first recorded, so a review cannot be emptied or softened after the fact.
-  if (stored && +stored.revA?.id === +r.revA.id && +stored.revB?.id === +r.revB.id) {
+  // A newer engine re-reads the drawings from scratch: its changes replace the old ones (the browser has
+  // already carried each decision over to the change in the same place), and the audit log says so.
+  const ver = (e) => (String(e || '').match(/(\d+)\.(\d+)/) || [0, 0, 0]).slice(1).map(Number);
+  const newer = (a, b) => { const [x, y] = ver(a), [p, q] = ver(b); return x > p || (x === p && y > q); };
+  const reread = !!(stored?.engine && r.engine && newer(r.engine, stored.engine));
+  if (stored && +stored.revA?.id === +r.revA.id && +stored.revB?.id === +r.revB.id && !reread) {
     const was = new Map((stored.clouds || []).map((c) => [c.id, c]));
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []).map((c) => (was.has(c.id) ? { ...c, ...was.get(c.id) } : c)), ...(stored.clouds || []).filter((c) => !ids.has(c.id))];
@@ -170,7 +175,7 @@ resolver.define('saveReview', async (req) => {
   await kvs.set(reviewKey(issue.id), review);
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   const audit = (await kvs.get(auditKey(issue.id))) || [];
-  audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed });
+  audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed, ...(reread ? { reread: `${stored.engine} -> ${r.engine}, ${stored.clouds?.length || 0} -> ${r.clouds?.length || 0} changes` } : {}) });
   await kvs.set(auditKey(issue.id), audit.slice(-200));
   // searchable copy for JQL only; the validator, the gadget and Rovo recompute from app storage
   await api.asApp().requestJira(route`/rest/api/3/issue/${key}/properties/${PROP}`, {

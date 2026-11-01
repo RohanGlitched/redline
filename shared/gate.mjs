@@ -35,13 +35,22 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     rejected && `${n(rejected, 'change was', 'changes were')} sent back to the drafter`,
     open && `${n(open, 'change on the drawing is', 'changes on the drawing are')} not in the change notes`,
     mismatched && `${n(mismatched, 'declared change shows a value its change note does not', 'declared changes show values their change notes do not')}`,
-    markups && `${n(markups, 'pen markup on the printed sheet needs', 'pen markups on the printed sheets need')} an answer`,
+    markups && `${n(markups, 'pen markup on the print needs', 'pen markups on the print need')} an answer`,
     unsigned && `${n(unsigned, 'declared change needs', 'declared changes need')} a sign-off`,
   ].filter(Boolean);
   const text = parts.length ? parts.join('; ')
     : !clouds.length && !marks.length ? 'No differences found between the revisions'
     : `All ${clouds.length} changes declared and signed off`;
-  return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, text };
+  // the same reasons, short, for places with little room (the light table's header)
+  const reasons = [
+    unseen && { kind: 'unseen', n: unseen, short: `${unseen} ${unseen === 1 ? 'sheet' : 'sheets'} not compared` },
+    rejected && { kind: 'rejected', n: rejected, short: `${rejected} sent back` },
+    open && { kind: 'open', n: open, short: `${open} not in the notes` },
+    mismatched && { kind: 'mismatched', n: mismatched, short: `${mismatched} ${mismatched === 1 ? 'value differs' : 'values differ'} from the note` },
+    markups && { kind: 'markups', n: markups, short: `${markups} pen ${markups === 1 ? 'markup' : 'markups'} to answer` },
+    unsigned && { kind: 'unsigned', n: unsigned, short: `${unsigned} to sign off` },
+  ].filter(Boolean);
+  return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, text, parts, reasons };
 }
 
 // The release verdict for one work item, from its PDF attachments and the review in app storage. The

@@ -79,6 +79,11 @@ modules:
       function: onIssueUpdated
       events:
         - avi:jira:updated:issue
+      # only updates that touch attachments or the description wake the function (no cost otherwise)
+      filter:
+        ignoreSelf: true
+        expression: "event.changelog != null && event.changelog.items.some(i => i.field == 'Attachment' || i.field == 'description')"
+        onError: RECEIVE_AND_LOG
   function:
     - key: onIssueUpdated
       handler: index.onIssueUpdated

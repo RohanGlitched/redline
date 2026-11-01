@@ -13,7 +13,7 @@ const MODES = [
   { key: 'a', label: 'Rev A', hint: 'The earlier revision only' },
   { key: 'b', label: 'Rev B', hint: 'The new revision only' },
 ];
-const kindText = (c) => (c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
+const kindText = (c) => (c.countedBack ? 'Set aside by Redline as a re-plot shift, counted back in by the reviewer' : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
   : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}` : KIND_TEXT[c.kind]);
 const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed', sheetAdded: 'Whole sheet added in this revision', sheetRemoved: 'Whole sheet removed in this revision' };
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -50,6 +50,8 @@ export default function LightTable() {
   const [sheets, setSheets] = useState({ count: 1, compared: {} }); // compared: { [sheet]: clouds }
   const [turning, setTurning] = useState(null); // sheet being compared while the current one stays on the table
   const analysed = useRef({});
+  const [aside, setAside] = useState({}); // { [sheet]: differences set aside as re-plot shifts }
+  const [showAside, setShowAside] = useState(false);
   const loadSheet = useCallback(async (o, n, revA, revB, keep = false) => {
     if (keep) setTurning(n); else setRes(null);
     let r;
@@ -61,7 +63,10 @@ export default function LightTable() {
     if (n !== 1) setMode((m) => (m === 'print' ? 'overlay' : m));
     // cloud ids carry the sheet so decisions on different sheets never collide
     const clouds = r.clouds.map((c) => ({ ...c, id: `s${n}-${c.id}`, sheet: n }));
-    const prior = o.review && o.review.revB?.id === revB.id ? o.review.decisions || {} : {};
+    // decisions saved earlier follow their change by where it is on the sheet, not by its number, so a
+    // newer engine that finds the changes in another order (or drops one) never moves a signature
+    const prior = o.review && o.review.revB?.id === revB.id ? priorDecisions(o.review, clouds, n) : {};
+    setAside((x) => ({ ...x, [n]: (r.setAside || []).map((a) => ({ ...a, id: `s${n}-${a.id}`, sheet: n })) }));
     setDecisions((d) => {
       const next = { ...prior, ...d };
       for (const c of clouds) next[c.id] = next[c.id] || (c.note ? { status: 'declared', note: c.note } : { status: 'open' });
@@ -219,8 +224,9 @@ export default function LightTable() {
         const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
-          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping })),
+          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack })),
           sheets: sheetInfo,
+          setAside: Object.values(aside).flat().slice(0, 300).map(({ id, sheet: sh, zone, x0, y0, x1, y1, match }) => ({ id, sheet: sh, zone, box: [x0, y0, x1, y1], match })),
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
           print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename }
             : print?.status === 'aside' ? { id: print.att.id, filename: print.att.filename, setAside: true } : null,
@@ -275,6 +281,18 @@ export default function LightTable() {
   }, [phase, res]);
   const decide = (id, patch) => { if (!readOnly) setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); };
   const signOff = (id) => decide(id, { signedBy: order.user.displayName, signedAt: new Date().toISOString() });
+  // a reviewer who disagrees with the engine counts a set-aside difference back in: it becomes a change
+  // like any other, open until it is declared or accepted and signed
+  const countBack = (a) => {
+    if (readOnly) return;
+    const n = a.sheet, num = Math.max(0, ...(sheets.compared[n] || []).map((c) => c.n)) + 1;
+    const c = { id: `s${n}-b${a.id.split('-a')[1]}`, n: num, sheet: n, x0: a.x0, y0: a.y0, x1: a.x1, y1: a.y1, zone: a.zone, kind: a.kind === 'added' || a.kind === 'removed' ? a.kind : 'changed', countedBack: true };
+    setAside((x) => ({ ...x, [n]: (x[n] || []).filter((y) => y.id !== a.id) }));
+    setSheets((x) => ({ ...x, compared: { ...x.compared, [n]: [...(x.compared[n] || []), c] } }));
+    setRes((r) => (r.sheet === n ? { ...r, clouds: [...r.clouds, c] } : r));
+    setDecisions((d) => ({ ...d, [c.id]: { status: 'open' } }));
+    select(c);
+  };
 
   // Keyboard: arrows walk the clouds, digits declare against a note line, S signs off, F fits the sheet.
   useEffect(() => {
@@ -365,6 +383,9 @@ export default function LightTable() {
                     </g>
                   );
                 })}
+                {showAside && (aside[res.sheet] || []).map((a) => (
+                  <rect key={a.id} className="rl-aside" x={a.x0 - 6} y={a.y0 - 6} width={a.x1 - a.x0 + 12} height={a.y1 - a.y0 + 12} rx="4" />
+                ))}
                 {res.sheet === 1 && marks.map((m, i) => {
                   const d = markDecisions[m.id] || {};
                   return (
@@ -393,7 +414,8 @@ export default function LightTable() {
           onSelect={select} onDecide={decide} onSign={signOff}
           print={print} marks={marks} markDecisions={markDecisions} onReadPhoto={readPhoto} onAddPhoto={addPhoto}
           onDecideMark={decideMark} onRaiseMark={raiseMark}
-          onSetAside={(att) => { if (!readOnly) setPrint({ att, status: 'aside' }); }} />
+          onSetAside={(att) => { if (!readOnly) setPrint({ att, status: 'aside' }); }}
+          aside={aside} showAside={showAside} onShowAside={setShowAside} onCountBack={countBack} />
       </div>
     </Shell>
   );
@@ -448,7 +470,11 @@ function Shell({ order, gate, revs, saved, children }) {
         {gate && (
           <div className={`rl-gate ${gate.blocked ? 'blocked' : 'clear'}`} role="status">
             <span className="dot" aria-hidden="true" />
-            <span><b>{gate.blocked ? 'Release blocked' : 'Ready to release'}</b>{gate.text}</span>
+            <span><b>{gate.blocked ? 'Release blocked' : 'Ready to release'}</b>
+              {gate.reasons?.length ? (
+                <span className="rl-reasons" title={gate.text}>{gate.reasons.map((r) => <span key={r.kind} className={`rl-reason ${r.kind}`}>{r.short}</span>)}</span>
+              ) : gate.text}
+            </span>
           </div>
         )}
         <span className="rl-saved" aria-live="polite">{saved}</span>
@@ -527,7 +553,7 @@ function Zoom({ cam }) {
   return <div className="rl-zoom" aria-hidden="true">{Math.round(cam.s * 100)}%</div>;
 }
 
-function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside }) {
+function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside, aside, showAside, onShowAside, onCountBack }) {
   const shown = phase === 'ready' ? res.clouds.length : phase === 'clouds' ? res.clouds.length : 0;
   return (
     <aside className={`rl-ledger ${order.canEdit === false ? 'readonly' : ''}`} aria-label="Change ledger">
@@ -567,6 +593,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
           ))}
         </ul>
         <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
+        <SetAside list={aside[res.sheet] || []} showing={showAside} onShow={onShowAside} onCountBack={onCountBack} readOnly={order.canEdit === false} />
       </section>
       <PrintSection order={order} res={res} print={print} marks={marks} markDecisions={markDecisions} sel={sel}
         onSelect={onSelect} onReadPhoto={onReadPhoto} onAddPhoto={onAddPhoto} onDecideMark={onDecideMark} onRaiseMark={onRaiseMark} onSetAside={onSetAside} />
@@ -684,22 +711,70 @@ function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect, readOnl
   );
 }
 
+// Earlier decisions for this sheet, matched to today's changes by overlap (at least half of the smaller
+// box). Decisions on other sheets are kept as they are; ones whose change is gone are dropped.
+function priorDecisions(review, clouds, sheetNo) {
+  const out = {}, saved = review.decisions || {};
+  const old = (review.clouds || []).filter((c) => (c.sheet || 1) === sheetNo && saved[c.id]);
+  for (const [id, d] of Object.entries(saved)) if (!id.startsWith(`s${sheetNo}-`)) out[id] = d;
+  const overlap = (p, q) => {
+    const w = Math.min(p[2], q[2]) - Math.max(p[0], q[0]), h = Math.min(p[3], q[3]) - Math.max(p[1], q[1]);
+    if (w <= 0 || h <= 0) return 0;
+    const area = (b) => (b[2] - b[0]) * (b[3] - b[1]);
+    return (w * h) / Math.max(1, Math.min(area(p), area(q)));
+  };
+  for (const c of clouds) {
+    const box = [c.x0, c.y0, c.x1, c.y1];
+    const best = old.map((o) => ({ o, f: overlap(box, o.box || [o.x0, o.y0, o.x1, o.y1]) })).sort((a, b) => b.f - a.f)[0];
+    if (best && best.f >= 0.5) out[c.id] = saved[best.o.id];
+  }
+  return out;
+}
+
+// What the engine set aside: line work that a re-export nudged by under 0.7 mm and that matches once
+// shifted. Not counted as changes, but never hidden: each one can be shown on the sheet and counted back in.
+function SetAside({ list, showing, onShow, onCountBack, readOnly }) {
+  const [open, setOpen] = useState(false);
+  if (!list.length) return null;
+  return (
+    <div className="rl-house aside">
+      <button className="rl-house-head" onClick={() => { setOpen(!open); onShow(!open); }} aria-expanded={open}>
+        <span><b>Set aside</b> {list.length} re-plot {list.length === 1 ? 'shift' : 'shifts'}: line work nudged by under 0.7 mm, the same once lined up</span>
+        <span className="rl-house-state">{showing ? 'Shown on the sheet' : 'Show'}</span>
+      </button>
+      {open && (
+        <ul>
+          {list.map((a) => (
+            <li key={a.id} className="rl-aside-row">
+              <span>Zone {a.zone}<em>matches at {(a.match * 100).toFixed(1)}%</em></span>
+              {!readOnly && <button className="rl-btn quiet" onClick={() => onCountBack(a)}>Count it as a change</button>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // Housekeeping: labels nudged without changing and plot stamps (date, file, tool version) from a re-export.
 // Real differences, so they still need an answer, but one click accepts and signs them all.
 function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, onSign, readOnly }) {
   const list = res.clouds.filter((c) => c.housekeeping);
   const [open, setOpen] = useState(false);
   if (!list.length) return null;
-  const todo = list.filter((c) => !(decisions[c.id]?.signedBy));
+  // bulk accept only touches changes nobody has answered yet (never one sent back or declared), and only
+  // once the list has been opened, so nothing is signed unseen
+  const todo = list.filter((c) => { const d = decisions[c.id] || {}; return !d.signedBy && (!d.status || d.status === 'open'); });
+  const unanswered = list.filter((c) => !(decisions[c.id]?.signedBy)).length;
   return (
     <div className="rl-house">
       <button className="rl-house-head" onClick={() => setOpen(!open)} aria-expanded={open}>
         <span><b>Housekeeping</b> {list.length} {list.length === 1 ? 'difference' : 'differences'}: {list.filter((c) => c.housekeeping === 'stamp').length} plot stamp, {list.filter((c) => c.housekeeping === 'textMove').length} moved labels</span>
-        <span className="rl-house-state">{todo.length ? `${todo.length} to answer` : 'All answered'}</span>
+        <span className="rl-house-state">{unanswered ? `${unanswered} to answer` : 'All answered'}</span>
       </button>
-      {todo.length > 0 && !readOnly && (
-        <button className="rl-btn" onClick={() => { for (const c of todo) { onDecide(c.id, { status: 'accepted', note: null }); onSign(c.id); } }}>Accept and sign off all {todo.length}</button>
-      )}
+      {todo.length > 0 && !readOnly && (open
+        ? <button className="rl-btn" onClick={() => { for (const c of todo) { onDecide(c.id, { status: 'accepted', note: null }); onSign(c.id); } }}>Accept and sign off the {todo.length} still open</button>
+        : <button className="rl-btn" onClick={() => setOpen(true)}>Look them over to sign them together</button>)}
       {open && (
         <ul>
           {list.map((c, i) => (
@@ -716,7 +791,12 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
   const state = cloudState(d);
   // the selected change scrolls into view in the ledger, wherever it was selected from
   const rowRef = useRef(null);
-  useEffect(() => { if (active) rowRef.current?.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' }); }, [active]);
+  // (after layout, and again once the row has faded in, so opening the light table on a change lands on it)
+  useEffect(() => {
+    if (!active) return;
+    const t = setTimeout(() => rowRef.current?.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' }), 60);
+    return () => clearTimeout(t);
+  }, [active, visible]);
   if (state === 'signed' && !active) {
     return (
       <li ref={rowRef} className={`rl-row signed compact ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>

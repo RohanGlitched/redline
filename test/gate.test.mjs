@@ -124,3 +124,27 @@ test('the verdict lists every reason, most serious first', () => {
   const g = gateOf([{ id: 'c1' }, { id: 'c2' }], { c2: { status: 'declared', note: 1 } }, [{ id: 'm1' }], {}, null, [{ n: 1, text: 'x' }]);
   assert.match(g.text, /^1 change on the drawing is not in the change notes; 1 pen markup .* an answer; 1 declared change needs a sign-off$/);
 });
+
+// ---------- housekeeping: what may be signed together ----------
+import { isStamp, withHousekeeping } from '../static/lighttable/src/engine/housekeeping.mjs';
+
+test('plot stamps are only stamp tokens and title-block words', () => {
+  assert.equal(isStamp('Date: 2024-01-12', 'Date: 2025-03-02'), true);
+  assert.equal(isStamp('KiCad E.D.A. 8.0.4', 'KiCad E.D.A. 9.0.1'), true);
+  assert.equal(isStamp('File: C:/work/board/main.kicad_sch 10:31:22', 'File: D:/new/board/main.kicad_sch 09:02:11'), true);
+});
+
+test('engineering changes that look like dates or versions are never plot stamps', () => {
+  for (const [a, b] of [
+    ['1/4-20 UNC-2B', '5/16-18 UNC-2B'], ['SCALE 1:20', 'SCALE 1:50'], ['1:20', '1:50'],
+    ['12.70-12.75', '12.80-12.85'], ['Ø6.35-6.40', 'Ø6.50-6.55'],
+    ['Rev 2024-01-01', 'Rev 2024-02-01 ECO-1234 HOLE MOVED'], ['Date: 2024-01-12', 'Date: 2024-02-12 SEE NOTE 4'],
+  ]) assert.equal(isStamp(a, b), false, `${a} -> ${b}`);
+});
+
+test('a move is housekeeping only when the changed ink is text', () => {
+  const label = { move: { mm: 1 }, sameText: true, textShare: 0.95 };
+  assert.equal(withHousekeeping(label).housekeeping, 'textMove');
+  assert.equal(withHousekeeping({ ...label, textShare: 0.4 }).housekeeping, undefined); // a hole moved with its callout
+  assert.equal(withHousekeeping({ before: 'Date: 2024-01-12', after: 'Date: 2025-01-12', textShare: 0.5 }).housekeeping, undefined);
+});

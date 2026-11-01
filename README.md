@@ -25,13 +25,13 @@ It is for the people who sign off drawing changes: design checkers, quality engi
 - a swipe or a blink between them;
 - either revision on its own.
 
-The ledger lists each change with before-and-after crops. Arrow keys step through the changes, number keys declare one against a change note, and S signs it off. Multi-sheet drawings are compared sheet by sheet, and the release stays blocked until every sheet has been compared.
+The ledger lists each change with before-and-after crops; a change whose content only moved says how far (*Moved 3 mm right and down*). Plot stamps and labels that moved without changing are grouped as housekeeping, to look over and sign together, and line work a re-export nudged by under 0.7 mm is set aside in its own list, drawn on the sheet on request and can be counted back in. Arrow keys step through the changes, number keys declare one against a change note, and S signs it off. Multi-sheet drawings are compared sheet by sheet, and the release stays blocked until every sheet has been compared.
 
 **Marked-up prints.** Attach a phone photo of the printed sheet. Redline finds the sheet in the photo, flattens it onto revision B, separates pen red from red printed on the drawing, and lists each markup. Every markup must be raised as a work item, covered by a change, or dismissed before release.
 
 **Release gate.** A workflow validator that refuses the release transition until the review is complete. It reads the review from Redline's own app storage rather than from an issue property, re-checks that the review covers the two newest PDFs, and fails closed if Jira cannot say what is attached. See [Set up the release gate](docs/release-gate.md).
 
-**Search and Rovo.** `redlineGate = "blocked"` in JQL finds blocked change orders. The *Drawing change checker* Rovo agent answers questions such as *"What changed on ENG-1, and is it declared?"*
+**Search and Rovo.** `redlineGate = "blocked"` in JQL finds blocked change orders. The *Drawing change checker* Rovo agent answers questions such as *"What changed on ENG-4, and is it declared?"*
 
 ## How the comparison works
 
@@ -47,7 +47,7 @@ The engine is plain JavaScript with no dependencies: [`static/lighttable/src/eng
 
 ## On real drawings
 
-We ran Redline on drawings nobody prepared for it: 27 consecutive revisions of five SparkFun open-hardware boards, taken from their GitHub history, with each commit message standing in for the change notes. In the 9 pairs we inspected cloud by cloud, Redline marked 25 content changes (a jumper, a test point, a pin, renamed nets, swapped connectors). **The commit messages describe 3 of them.** The run also taught the engine to set aside re-plot shifts and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
+We ran Redline on drawings nobody prepared for it: 27 consecutive revisions of five SparkFun open-hardware boards, taken from their GitHub history, with each commit message standing in for the change notes. In the 9 pairs we inspected cloud by cloud, Redline marked 25 content changes (a jumper, a test point, a pin, renamed nets, swapped connectors). **The commit messages describe 3 of them.** The run also taught the engine to set aside re-plot shifts (all 32 it set aside are published side by side, and each reads the same before and after) and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
 
 ## Measured on a benchmark
 

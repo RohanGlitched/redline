@@ -4,8 +4,9 @@ import { renderPage } from './pdf.js';
 import { compare, warpGray } from './engine/core.mjs';
 import { readMarkups } from './engine/markup.mjs';
 import { numbersIn } from '../../../shared/gate.mjs';
+import { withHousekeeping } from './engine/housekeeping.mjs';
 
-export const ENGINE_VERSION = 'redline-core 0.3';
+export const ENGINE_VERSION = 'redline-core 0.4';
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 // ASME Y14.1 style zones: columns numbered right to left, rows lettered bottom to top.
@@ -73,19 +74,23 @@ function sameTextOf(c, textsA = [], textsB = [], T, k) {
   return textsA.some(hit);
 }
 
-// Plot stamps: a re-exported PDF carries a new date, time, file path or tool version. These are real
-// differences but not engineering changes, so they are grouped as housekeeping for one-click review.
-const STAMP = /(\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?\b|[A-Z]:\\|\.(sch|kicad_sch|brd|dwg|sldprt|pdf)\b|\b\d+\.\d+\.\d+(-\w+)?\b|\bDate:|\bSheet:?\s*\d+\/\d+)/i;
-function isStamp(before, after) {
-  if (!before || !after) return false;
-  const strip = (s) => s.replace(new RegExp(STAMP.source, 'gi'), ' ').replace(/[\\/]/g, ' ').replace(/\s+/g, ' ').trim();
-  return STAMP.test(before) && STAMP.test(after) && (strip(before) === strip(after) || strip(before).length < 6);
-}
-
-function withHousekeeping(c) {
-  const textMove = !!c.move && c.sameText;
-  const stamp = isStamp(c.before, c.after);
-  return textMove || stamp ? { ...c, housekeeping: stamp ? 'stamp' : 'textMove' } : c;
+// The share of a change's changed pixels that lie inside the drawing's text: removed ink checked against
+// revision A's text boxes, added ink against revision B's. A moved hole with its callout is mostly not text.
+function textShareOf(c, A, Bw, textsA = [], textsB = [], T, k) {
+  const pad = 3, near = (ts, x0, y0, x1, y1) => ts.filter((t) => t.x1 / k >= x0 - 20 && t.x0 / k <= x1 + 20 && t.y1 / k >= y0 - 20 && t.y0 / k <= y1 + 20);
+  const tA = near(textsA, c.x0, c.y0, c.x1, c.y1);
+  const cb = [[c.x0, c.y0], [c.x1, c.y1], [c.x0, c.y1], [c.x1, c.y0]].map(([x, y]) => [T[0] * x + T[1] * y + T[2], T[3] * x + T[4] * y + T[5]]);
+  const tB = near(textsB, Math.min(...cb.map((q) => q[0])), Math.min(...cb.map((q) => q[1])), Math.max(...cb.map((q) => q[0])), Math.max(...cb.map((q) => q[1])));
+  if (!tA.length && !tB.length) return 0;
+  const inBox = (ts, x, y) => ts.some((t) => x >= t.x0 / k - pad && x <= t.x1 / k + pad && y >= t.y0 / k - pad && y <= t.y1 / k + pad);
+  let n = 0, hit = 0;
+  for (let y = c.y0; y <= c.y1; y += 2) for (let x = c.x0; x <= c.x1; x += 2) {
+    const a = A.data[y * A.w + x] < 140, b = Bw.data[y * A.w + x] < 140;
+    if (a === b) continue;
+    n++;
+    if (a ? inBox(tA, x, y) : inBox(tB, T[0] * x + T[1] * y + T[2], T[3] * x + T[4] * y + T[5])) hit++;
+  }
+  return n ? hit / n : 0;
 }
 
 // A sheet only one revision has: the whole sheet is one change, which has to be declared like any other.
@@ -211,8 +216,14 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
   const clouds = r.clouds
     .sort((p, q) => p.y0 - q.y0 || p.x0 - q.x0)
     .map((c, i) => withHousekeeping({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed,
-      zone: zoneOf(c, A.w, A.h), move: moveOf(c.moved, dpi), ...textOf(c, hA.texts, hB.texts, r.transform, k), sameText: sameTextOf(c, hA.texts, hB.texts, r.transform, k) }));
-  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes, page || 1), transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
+      zone: zoneOf(c, A.w, A.h), move: moveOf(c.moved, dpi), ...textOf(c, hA.texts, hB.texts, r.transform, k), sameText: sameTextOf(c, hA.texts, hB.texts, r.transform, k),
+      textShare: textShareOf(c, A, Bw, hA.texts, hB.texts, r.transform, k) }));
+  // differences the engine set aside as re-plot shifts (line work nudged under ~0.7 mm, matching once
+  // shifted): not changes, but listed so a reviewer can see each one and count it back in
+  const setAside = (r.rejected || []).filter((c) => c.shiftNcc !== undefined)
+    .sort((p, q) => p.y0 - q.y0 || p.x0 - q.x0)
+    .map((c, i) => ({ id: `a${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, zone: zoneOf(c, A.w, A.h), match: Math.round(Math.min(c.shiftNcc, c.shiftNccWorst ?? 1) * 1000) / 1000 }));
+  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes, page || 1), setAside, transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
 }
 
 // ---------- paper markups ----------

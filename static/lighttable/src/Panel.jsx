@@ -66,7 +66,9 @@ export default function Panel() {
         <span className="dot" aria-hidden="true" />
         <div>
           <p className="lead">{!gate ? 'Not compared yet' : gate.blocked ? 'Release blocked' : 'Ready to release'}</p>
-          <p className="sub">{!gate ? `${pdfs[pdfs.length - 2].filename} and ${pdfs[pdfs.length - 1].filename} are attached.` : cap(gate.text)}</p>
+          {gate?.parts?.length > 1
+            ? <ul className="sub rl-panel-reasons">{gate.parts.map((p) => <li key={p}>{cap(p)}</li>)}</ul>
+            : <p className="sub">{!gate ? `${pdfs[pdfs.length - 2].filename} and ${pdfs[pdfs.length - 1].filename} are attached.` : cap(gate.text)}</p>}
         </div>
         <button className="rl-btn primary" onClick={() => open()}>{gate ? 'Open light table' : 'Compare revisions'}</button>
       </div>

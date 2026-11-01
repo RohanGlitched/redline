@@ -24,7 +24,9 @@ for (const j of jobs) {
       return { box: [c.x0, c.y0, c.x1, c.y1].map(Math.round), kind: c.kind, moved: c.moved || null, area: (c.x1 - c.x0) * (c.y1 - c.y0),
         before: words(p.Awords, c.x0 - pad, c.y0 - pad, c.x1 + pad, c.y1 + pad), after: words(p.Bwords, Math.min(...bx) - pad, Math.min(...by) - pad, Math.max(...bx) + pad, Math.max(...by) + pad) };
     });
-    res.pages.push({ page: p.page, w: A.w, h: A.h, ms: Date.now() - t0, clouds });
+    // what the shift check set aside, kept so anyone can look at each one (sheets.py crops them too)
+    const setAside = (r.rejected || []).filter((c) => c.shiftNcc !== undefined).map((c) => ({ box: [c.x0, c.y0, c.x1, c.y1].map(Math.round), match: Math.round(Math.min(c.shiftNcc, c.shiftNccWorst ?? 1) * 1000) / 1000 }));
+    res.pages.push({ page: p.page, w: A.w, h: A.h, ms: Date.now() - t0, clouds, setAside });
   }
   out.push(res);
   console.log(j.name, res.pages.map((p) => p.clouds ? p.clouds.length : p.sheet).join(','));

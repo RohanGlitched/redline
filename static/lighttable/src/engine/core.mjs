@@ -257,14 +257,22 @@ export function diff(A, Bw, opts = {}) {
   }).filter((c) => c.added + c.removed >= minPx);
   // 4) on clean (vector) drawings, a re-exported PDF can nudge line work by a pixel or two. A cloud whose
   // before and after patches match almost perfectly once shifted up to `shiftPx` (about 0.7 mm) is a
-  // re-plot shift, not an edit, and is set aside with the rejected blobs.
+  // re-plot shift, not an edit, and is set aside with the rejected blobs. Each blob in the cloud has to
+  // match on its own too, so one changed digit inside a nudged block keeps the whole cloud.
   let final = clouds;
   if (!noisy && (opts.shiftTau ?? 0.985) < 1) {
     const ra = darkness(A, 0, 0), rb = darkness(Bw, 0, 0);
     final = [];
     for (const c of clouds) {
-      c.shiftNcc = bestNcc(ra, rb, w, h, c, opts.shiftPx ?? 4, 4);
-      if (c.shiftNcc >= (opts.shiftTau ?? 0.985)) { rejected.push(c); continue; }
+      const sTau = opts.shiftTau ?? 0.985, sPx = opts.shiftPx ?? 4;
+      c.shiftNcc = bestNcc(ra, rb, w, h, c, sPx, 4);
+      if (c.shiftNcc >= sTau) {
+        // (slivers under 4 px across are line work redrawn in place: too thin to be a character)
+        const inside = kept.filter((b) => b.x0 >= c.x0 && b.x1 <= c.x1 && b.y0 >= c.y0 && b.y1 <= c.y1 && b.x1 - b.x0 >= 3 && b.y1 - b.y0 >= 3);
+        const worst = Math.min(1, ...inside.map((b) => bestNcc(ra, rb, w, h, b, sPx, 2)));
+        if (worst >= sTau) { c.shiftNccWorst = worst; rejected.push(c); continue; }
+        c.shiftNcc = worst;
+      }
       // 5) the same content a little further away is a move: say how far, so a checker can tell a
       // nudged label from a hole that moved 3 mm
       // (a move needs ink on both sides: something added or removed alone is never a move)
@@ -316,47 +324,31 @@ function moveOf(add, rem, da, db, ink, w, h, c, maxPx) {
     if (add[i]) ap.push(i);
   }
   if (rp.length < 8 || ap.length < 8) return { fit: 0, dx: 0, dy: 0 };
-  const thin = (arr) => (arr.length > 2000 ? arr.filter((_, k) => k % Math.ceil(arr.length / 2000) === 0) : arr);
-  const R = thin(rp), Ad = thin(ap);
+  const thin = (arr, n) => (arr.length > n ? arr.filter((_, k) => k % Math.ceil(arr.length / n) === 0) : arr);
   const share = (pts, img, dx, dy) => {
     let hits = 0;
     for (const i of pts) { const x = (i % w) + dx, y = ((i / w) | 0) + dy; if (x >= 0 && x < w && y >= 0 && y < h && img[y * w + x] >= ink) hits++; }
     return hits / pts.length;
   };
-  let best = { fit: 0, dx: 0, dy: 0 };
-  for (let dy = -maxPx; dy <= maxPx; dy++) for (let dx = -maxPx; dx <= maxPx; dx++) {
+  const fitAt = (R, Ad, dx, dy, floor) => { const f1 = share(R, db, dx, dy); return f1 <= floor ? 0 : Math.min(f1, share(Ad, da, -dx, -dy)); };
+  // coarse to fine: every other shift on a sample of 400 pixels, then every shift near the best few at full
+  // detail (up to 2,000 pixels). About 15 times less work than trying every shift at full detail.
+  const r1 = thin(rp, 400), a1 = thin(ap, 400), coarse = [];
+  for (let dy = -maxPx; dy <= maxPx; dy += 2) for (let dx = -maxPx; dx <= maxPx; dx += 2) {
     if (Math.abs(dx) + Math.abs(dy) < 2) continue;
-    const f1 = share(R, db, dx, dy);
-    if (f1 <= best.fit) continue;
-    const fit = Math.min(f1, share(Ad, da, -dx, -dy));
+    const fit = fitAt(r1, a1, dx, dy, 0.3);
+    if (fit > 0.3) coarse.push({ fit, dx, dy });
+  }
+  coarse.sort((p, q) => q.fit - p.fit);
+  const R = thin(rp, 2000), Ad = thin(ap, 2000), tried = new Set();
+  let best = { fit: 0, dx: 0, dy: 0 };
+  for (const k of coarse.slice(0, 4)) for (let dy = k.dy - 1; dy <= k.dy + 1; dy++) for (let dx = k.dx - 1; dx <= k.dx + 1; dx++) {
+    if (Math.abs(dx) + Math.abs(dy) < 2 || Math.abs(dx) > maxPx || Math.abs(dy) > maxPx || tried.has(dy * 1000 + dx)) continue;
+    tried.add(dy * 1000 + dx);
+    const fit = fitAt(R, Ad, dx, dy, best.fit);
     if (fit > best.fit) best = { fit, dx, dy };
   }
   return best;
-}
-
-// The shift of B against A (within +/- `shift` px) at which a patch matches best, with its correlation.
-// Coarse-to-fine: every 3 px first, then around the best.
-function bestShift(a, b, w, h, c, shift, pad) {
-  const at = (dx, dy) => nccAt(a, b, w, h, c, pad, dx, dy);
-  let best = { ncc: -1, dx: 0, dy: 0 };
-  for (let dy = -shift; dy <= shift; dy += 3) for (let dx = -shift; dx <= shift; dx += 3) { const r = at(dx, dy); if (r > best.ncc) best = { ncc: r, dx, dy }; }
-  const c0 = { ...best };
-  for (let dy = c0.dy - 2; dy <= c0.dy + 2; dy++) for (let dx = c0.dx - 2; dx <= c0.dx + 2; dx++) { const r = at(dx, dy); if (r > best.ncc) best = { ncc: r, dx, dy }; }
-  return best;
-}
-
-function nccAt(a, b, w, h, c, pad, dx, dy) {
-  const x0 = Math.max(0, c.x0 - pad, -dx), y0 = Math.max(0, c.y0 - pad, -dy);
-  const x1 = Math.min(w - 1, c.x1 + pad, w - 1 - dx), y1 = Math.min(h - 1, c.y1 + pad, h - 1 - dy);
-  if (x1 <= x0 || y1 <= y0) return -1;
-  const st = Math.max(1, Math.round(Math.sqrt((x1 - x0) * (y1 - y0) / 20000)));
-  let n = 0, sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
-  for (let y = y0; y <= y1; y += st) for (let x = x0; x <= x1; x += st) {
-    const va = a[y * w + x], vb = b[(y + dy) * w + x + dx];
-    n++; sa += va; sb += vb; saa += va * va; sbb += vb * vb; sab += va * vb;
-  }
-  const cov = sab - sa * sb / n, va = saa - sa * sa / n, vb = sbb - sb * sb / n;
-  return va > 1e-9 && vb > 1e-9 ? cov / Math.sqrt(va * vb) : (va <= 1e-9 && vb <= 1e-9 ? 1 : 0);
 }
 
 function bestNcc(a, b, w, h, c, shift, pad) {

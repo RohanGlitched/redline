@@ -8,7 +8,7 @@ Everything in [the benchmark](../bench/README.md) is built by us: we planted the
 
 - **Drawings:** 7 PDF drawings from 5 repositories (`SparkFun_GNSSDO` main board and GNSSDO Plus, `SparkFun_GNSS_Flex_Breakout`, `SparkFun_IM19_IMU_Breakout`, `SparkFun_GNSS_mosaic-G5_P3`, `SparkFun_Thing_Plus_RA6M5`), plus the GNSSDO dimensions drawing.
 - **Revision pairs:** every consecutive pair of versions in git history: **27 pairs, 118 sheet pairs**, dated December 2023 to November 2025.
-- **Engine:** the same one the app ships, at the same settings. Scripts are in [`bench/real/`](../bench/real/); anyone can clone the repositories and run them again.
+- **Engine:** the same comparison code the app ships, with the same thresholds. The harness renders each PDF with PyMuPDF straight to 150 dpi, where the app renders with pdf.js at 300 dpi and halves it; both compare at 150 dpi. Scripts are in [`bench/real/`](../bench/real/); anyone can clone the repositories and run them again.
 
 ## What it found
 
@@ -38,8 +38,8 @@ This is not a criticism of SparkFun's engineers: these are working commits in an
 
 Our own benchmark never re-exports a PDF; real projects do every time. Two changes to the engine came straight from this run:
 
-1. **Re-plot shifts.** A re-exported PDF can nudge line work by a pixel or two. Redline now matches each cloud's before and after patches within about 0.7 mm and sets aside the ones that agree. On this run that removed 32 of 395 clouds, including all 5 with no real difference in the inspected sample (and one label nudged by less than 0.7 mm). On the planted benchmark it removed false clouds (0.11 to 0.01 per sheet) and missed nothing (150 of 150 edits in the subset we reran).
-2. **Moves and housekeeping.** Redline now measures moves: when the ink that disappeared reappears nearby with the same shape, the change says so, with the distance (the sample bracket's hole reads "Moved 3 mm right and down", exactly as planted). Plot stamps, and labels that moved without changing where the PDF keeps its text, are grouped as housekeeping that a reviewer can accept and sign in one click; every other move is labelled with its distance, so a reviewer can tell a nudged block from an edit at a glance.
+1. **Re-plot shifts.** A re-exported PDF can nudge line work by a pixel or two. Redline now matches each cloud's before and after patches within about 0.7 mm, and every separate piece of ink inside the cloud on its own too, so one changed digit inside a nudged block keeps the cloud. Clouds that pass are set aside, not deleted: the app lists them under "Set aside", draws them on the sheet on request, and a reviewer can count any one back in as a change. On this run 32 of 395 clouds were set aside, including all 5 with no real difference in the inspected sample and one label nudged by less than 0.7 mm. We looked at all 32 side by side ([`real-world/set-aside-all.png`](real-world/set-aside-all.png), made by `bench/real/aside_sheet.py`): every one reads the same before and after. On the planted benchmark the check cut false clouds from 0.11 to 0.01 per sheet and still found 431 of 432 edits.
+2. **Moves and housekeeping.** Redline now measures moves: when the ink that disappeared reappears nearby with the same shape, the change says so, with the distance (the sample bracket's hole reads "Moved 3 mm right and down", exactly as planted; on this run, 72 of the 363 clouds measured as moves). Two kinds of difference are grouped as housekeeping: plot stamps (both texts nothing but dates, times, file paths and tool versions) and labels that moved without changing. Both need at least 90% of the changed ink to be text, so a hole that moved with its callout stays in the main list with its distance. A reviewer opens the group, looks it over, and signs the open ones together; nothing already sent back or declared is touched.
 
 ## Limits
 
@@ -47,4 +47,4 @@ Our own benchmark never re-exports a PDF; real projects do every time. Two chang
 - Most of these PDFs were exported without a text layer, so the value check had little to read; the pixel comparison carried the run.
 - The classification above is our own reading of each cloud; `bench/real/sheets.py` regenerates the side-by-side crops so others can check it.
 
-Drawings © SparkFun Electronics, published under CC BY-SA 4.0; crops reproduced with attribution.
+Drawings © SparkFun Electronics, published under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) in the repositories named above. The figures on this page are cropped from them and annotated by us (red frames, captions); as adaptations they are shared under the same licence, CC BY-SA 4.0. The rest of this repository is under its own licence.
