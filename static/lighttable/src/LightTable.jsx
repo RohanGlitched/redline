@@ -415,7 +415,7 @@ function Shell({ order, gate, revs, saved, children }) {
         <div className="rl-title">
           <span className="rl-key">{order?.key || ''}</span>
           <h1>{order?.summary || 'Redline'}</h1>
-          {revs && <span className="rl-revs"><b>{revName(revs[0])}</b><span aria-hidden="true"> to </span><b className="b">{revName(revs[1])}</b></span>}
+          {revs && !/\brev\b/i.test(order?.summary || '') && <span className="rl-revs"><b>{revName(revs[0])}</b><span aria-hidden="true"> to </span><b className="b">{revName(revs[1])}</b></span>}
         </div>
         {gate && (
           <div className={`rl-gate ${gate.blocked ? 'blocked' : 'clear'}`} role="status">
@@ -632,6 +632,12 @@ function MarkCrop({ flat, m }) {
 }
 
 // Sticky at the top of the ledger: how many things still need a person, and a button to the next one.
+// "3 changes, 1 pen markup": what the outstanding items are, so the count is never a mystery
+function whatOf(todo, marks) {
+  const m = todo.filter((x) => marks.includes(x)).length, c = todo.length - m;
+  return [c && `${c} ${c === 1 ? 'change' : 'changes'}`, m && `${m} pen ${m === 1 ? 'markup' : 'markups'}`].filter(Boolean).join(', ');
+}
+
 function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect, readOnly }) {
   const todo = [
     ...res.clouds.filter((c) => { const d = decisions[c.id] || {}; return d.status === 'rejected' ? false : !(d.status === 'declared' || d.status === 'accepted') || !d.signedBy; }),
@@ -643,8 +649,8 @@ function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect, readOnl
   const next = todo[(i + 1) % todo.length];
   return (
     <div className={`rl-needs ${todo.length ? '' : 'done'}`}>
-      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? "needs a decision" : "need a decision") : "need you"}</> : <><b>All {total}</b> answered</>}</p>
-      {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{i === -1 ? 'Start' : 'Next'}</button>}
+      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? 'needs a decision' : 'need a decision') : 'need you'}<span className="what">{whatOf(todo, marks)}</span></> : <><b>All {total}</b> answered</>}</p>
+      {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{readOnly ? (i === -1 ? 'Step through' : 'Next') : (i === -1 ? 'Start' : 'Next')}</button>}
     </div>
   );
 }

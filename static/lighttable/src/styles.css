@@ -315,3 +315,4 @@ button { font: inherit; color: inherit; }
 .rl-value.slip { padding: 8px 10px; border-radius: 4px; background: var(--rl-danger-bg); color: var(--rl-danger-text); }
 .rl-value.slip p { margin: 0 0 6px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.rl-needs .what { display: block; font-size: 12px; color: var(--rl-subtle); font-weight: 400; }
