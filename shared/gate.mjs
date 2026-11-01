@@ -136,12 +136,12 @@ export function verdictOf(attachments, review, notes = null) {
   const unplaced = reviewedB ? (attachments || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''))
     && !pdfs.some((p) => +p.id === +a.id) && (Date.parse(a.created) > Date.parse(reviewedB.created) || +a.id > +reviewedB.id)
     && !review.decisions?.[`pdf${a.id}`]?.signedBy) : [];
-  if (unplaced.length) return { blocked: true, text: `${unplaced.map((a) => a.filename).join(', ')} was attached after the reviewed revision and is not compared; open the light table to compare it or set it aside as not a drawing` };
+  if (unplaced.length) return { blocked: true, text: `${unplaced.map((a) => a.filename).join(', ')} was attached after the reviewed revision and is not compared; a new revision should be named like the others so Redline compares it; anything else, set it aside on the light table` };
   const [a, b] = pdfs.slice(-2);
   if (+review.revB?.id !== +b.id) return { blocked: true, text: 'a newer drawing revision was attached after the last review' };
   if (review.revA?.id && +review.revA.id !== +a.id) return { blocked: true, text: 'the review compared a different pair of revisions' };
   // the newest photo on the work item must be the print the review read (or set aside as not a print)
-  const photos = (attachments || []).filter((x) => /^image\/(jpeg|png|webp)$/.test(x.mimeType))
+  const photos = (attachments || []).filter((x) => /^image\/(jpeg|png|webp|heic|heif)$/.test(x.mimeType))
     .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id);
   if (photos.length && +review.print?.id !== +photos[photos.length - 1].id) {
     return { blocked: true, text: 'the newest photo of a marked-up print has not been read on the light table' };

@@ -186,7 +186,7 @@ export default function LightTable() {
       const ox = (r.width - photo.w * fitK) / 2, oy = (r.height - photo.h * fitK) / 2;
       const from = result.corners.map(([x, y]) => [ox + x * fitK, oy + y * fitK]);
       const to = [[c.x, c.y], [c.x + res.A.w * c.s, c.y], [c.x + res.A.w * c.s, c.y + res.A.h * c.s], [c.x, c.y + res.A.h * c.s]];
-      setMarkDecisions((m) => Object.fromEntries(result.marks.map((k) => [k.id, m[k.id] || { status: 'open' }])));
+      setMarkDecisions((m) => ({ ...m, ...Object.fromEntries(result.marks.map((k) => [k.id, m[k.id] || { status: 'open' }])) }));
       if (reduceMotion) { setPrint({ att, status: 'done', result }); setMode((m) => (sheetRef.current === 1 ? 'print' : m)); return; }
       // hold the photo as taken for a beat, then let it settle onto the sheet
       setFlatten({ url, src: result.corners, from, to, t: 0, w: photo.w, h: photo.h });
@@ -227,6 +227,14 @@ export default function LightTable() {
   }
 
   const marks = print?.status === 'done' ? print.result.marks : [];
+  // pen markups on an earlier photo that nobody answered yet (the photo still attached): shown and answerable here
+  const earlierMarks = useMemo(() => {
+    const ids = new Set((order?.images || []).map((a) => String(a.id)));
+    return (order?.review?.marks || []).filter((m) => {
+      const photo = /^p(\d+)-/.exec(m.id)?.[1];
+      return photo && ids.has(photo) && photo !== String(print?.att?.id) && !marks.some((x) => x.id === m.id);
+    }).map((m) => ({ ...m, x0: m.box?.[0], y0: m.box?.[1], x1: m.box?.[2], y1: m.box?.[3], earlier: true }));
+  }, [order, print, marks]);
   // someone who can view the work item but not edit it sees the review without the controls to change it
   const readOnly = order?.canEdit === false;
   const decideMark = (id, patch) => { if (!readOnly) { touchedRef.current = true; setMarkDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); } };
@@ -248,7 +256,13 @@ export default function LightTable() {
     Object.entries(ms || {}).map(([id, m]) => [id, m.status ?? null]).sort()]);
   const latestSnap = useRef(null), savedSnap = useRef(null), touchedRef = useRef(false);
   // what this reviewer signed or confirmed since the last save: the server stamps only these, by name
-  const signedNow = useRef(new Set()), confirmedNow = useRef(new Set());
+  // id -> { at, shown }: when it was signed here, and the note's words on screen at that moment
+  const signedNow = useRef(new Map()), confirmedNow = useRef(new Map());
+  const shownNote = (id) => {
+    const d = decisions[id] || {};
+    const no = d.status === 'declared' ? d.note : /^note(\d+)$/.test(id) ? +id.slice(4) : null;
+    return no != null ? order.notes.find((n) => n.n === no)?.text ?? null : null;
+  };
   latestSnap.current = snapOf(decisions, markDecisions);
   const markDecisionsRef = useRef(markDecisions); markDecisionsRef.current = markDecisions;
   const [closeWarned, setCloseWarned] = useState(false);
@@ -277,13 +291,15 @@ export default function LightTable() {
   const allClouds = useMemo(() => Object.values(sheets.compared).flat(), [sheets]);
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => {
-    const g = gateOf(allClouds, decisions, marks, markDecisions, sheetInfo, order?.notes, { setAside: Object.values(aside).flat().length });
+    const g = gateOf(allClouds, decisions, [...marks, ...earlierMarks], markDecisions, sheetInfo, order?.notes, { setAside: Object.values(aside).flat().length });
     const images = order?.images || [];
     const newest = images[images.length - 1];
     const photoOk = !newest || ((print?.status === 'done' || print?.status === 'aside') && String(print.att?.id) === String(newest.id));
+    const newerPdfs = (order?.otherPdfs || []).filter((a) => (Date.parse(a.created) > Date.parse(res?.revB?.created || 0) || +a.id > +(res?.revB?.id || 0)) && !decisions[`pdf${a.id}`]?.signedBy);
+    if (newerPdfs.length) g.reasons = [...(g.reasons || []), { kind: 'pdf', short: `${newerPdfs.length} newer PDF not compared` }], g.blocked = true, g.text = [g.parts?.length ? g.text : null, `${newerPdfs.map((a) => a.filename).join(', ')} attached after the reviewed revision`].filter(Boolean).join('; ');
     const why = !newest || photoOk ? null : !print || print.status === 'reading' ? 'photo not read yet' : print.status === 'error' ? 'photo could not be read: set it aside' : 'newest photo not read';
     return why ? { ...g, blocked: true, reasons: [...(g.reasons || []), { kind: 'photo', short: why }], text: [g.parts?.length ? g.text : null, `the ${why}`].filter(Boolean).join('; ') } : g;
-  }, [allClouds, decisions, marks, markDecisions, sheets, order, print, aside]);
+  }, [allClouds, decisions, marks, earlierMarks, markDecisions, sheets, order, print, aside]);
   // Saves go one at a time: a decision made while a save is on its way waits for it, then saves with
   // the new version, so two quick decisions never look like someone else saving in between.
   const saving = useRef(false), pending = useRef(false);
@@ -300,8 +316,9 @@ export default function LightTable() {
       saving.current = true;
       setSaved('Saving');
       try {
-        const sentSigned = [...signedNow.current], sentConfirmed = [...confirmedNow.current];
-        const out = await invoke('saveReview', { baseVersion: versionRef.current, signed: sentSigned, confirmed: sentConfirmed, review: {
+        const sentSigned = [...signedNow.current.entries()], sentConfirmed = [...confirmedNow.current.entries()];
+        const out = await invoke('saveReview', { baseVersion: versionRef.current, signed: sentSigned.map(([id]) => id), confirmed: sentConfirmed.map(([id]) => id),
+          shown: Object.fromEntries([...sentSigned, ...sentConfirmed].map(([id, v]) => [id, v.shown]).filter(([, t]) => t != null)), review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
           clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack, titleBlock, revLetter, textOnly })),
@@ -310,7 +327,7 @@ export default function LightTable() {
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
           print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename }
             : print?.status === 'aside' ? { id: print.att.id, filename: print.att.filename, setAside: true } : null,
-          marks: marks.map(({ id, n, zone, x0, y0, x1, y1 }) => ({ id, n, zone, box: [x0, y0, x1, y1] })), markDecisions,
+          marks: [...marks, ...earlierMarks].map(({ id, n, zone, x0, y0, x1, y1 }) => ({ id, n, zone, box: [x0, y0, x1, y1] })), markDecisions,
         } });
         if (out?.readOnly) { setSaved('View only: you cannot edit ' + (order?.key || 'this work item')); return; }
         if (out?.conflict) {
@@ -318,10 +335,11 @@ export default function LightTable() {
           // meanwhile would send the old decisions on top of theirs: it is dropped, and the merged state saves next
           pending.current = false;
           // their decisions replace this reviewer's unsaved ones, signatures included: nothing is left to stamp
+          const lost = Object.keys(decisions).filter((id) => JSON.stringify(decisions[id]) !== JSON.stringify(out.review.decisions?.[id])).length;
           signedNow.current.clear(); confirmedNow.current.clear();
           versionRef.current = out.review.version || 0;
           setDecisions(out.review.decisions || {}); setMarkDecisions(out.review.markDecisions || {});
-          setSaved('Someone else just saved this review; their decisions are loaded');
+          setSaved(lost ? `Someone else just saved this review; their decisions are loaded and ${lost} of yours ${lost === 1 ? 'was' : 'were'} not saved: please make ${lost === 1 ? 'it' : 'them'} again` : 'Someone else just saved this review; their decisions are loaded');
           return;
         }
         if (out?.stale) { setSaved(out.error); return; }
@@ -329,8 +347,10 @@ export default function LightTable() {
         // take back what the server stamped (who signed, when), without disturbing decisions made since
         // (only when something actually changed: a new object here would trigger another save, forever)
         // what was sent is now on the server; anything signed since waits for the next save
-        for (const id of sentSigned) signedNow.current.delete(id);
-        for (const id of sentConfirmed) confirmedNow.current.delete(id);
+        for (const [id, v] of sentSigned) if (signedNow.current.get(id)?.at === v.at) signedNow.current.delete(id);
+        for (const [id, v] of sentConfirmed) if (confirmedNow.current.get(id)?.at === v.at) confirmedNow.current.delete(id);
+        // a note rewritten since this light table opened: those signatures were not taken, and the reviewer is told
+        if (out?.staleNotes?.length) setSaved(`Note ${out.staleNotes.join(', ')} changed since you opened the light table, so ${out.staleNotes.length === 1 ? 'that signature was' : 'those signatures were'} not saved. Close and open it again to read the new words.`);
         // the server's word on every signature: stamped, kept, or dropped (a rewritten note, a re-read), unless the
         // reviewer has signed or changed that decision again since this save left
         if (out?.decisions) setDecisions((cur) => {
@@ -397,7 +417,7 @@ export default function LightTable() {
   }, [phase, res]);
   const decide = (id, patch) => {
     if (readOnly) return;
-    if (patch.valueOk) confirmedNow.current.add(id);
+    if (patch.valueOk) confirmedNow.current.set(id, { at: patch.valueOk.at, shown: shownNote(id) });
     touchedRef.current = true;
     setDecisions((d) => {
       const cur = d[id] || {};
@@ -405,7 +425,7 @@ export default function LightTable() {
       return { ...d, [id]: { ...cur, ...(moved ? { signedBy: null, signedAt: null, valueOk: null } : {}), ...patch } };
     });
   };
-  const signOff = (id) => { signedNow.current.add(id); decide(id, { signedBy: order.user.displayName, signedAt: new Date().toISOString() }); };
+  const signOff = (id) => { const at = new Date().toISOString(); signedNow.current.set(id, { at, shown: shownNote(id) }); decide(id, { signedBy: order.user.displayName, signedAt: at }); };
   // a reviewer who disagrees with the engine counts a set-aside difference back in: it becomes a change
   // like any other, open until it is declared or accepted and signed
   const countBack = (a) => {
@@ -554,7 +574,7 @@ export default function LightTable() {
             {mode === 'print' && /_print-photo\.jpg$/.test(print?.att?.filename || '') && <div className="rl-simulated">Sample: simulated photo of a marked-up print</div>}
           </div>
         </section>
-        <Ledger res={res} order={order} decisions={decisions} sel={sel} phase={phase} gate={gate}
+        <Ledger earlierMarks={earlierMarks} res={res} order={order} decisions={decisions} sel={sel} phase={phase} gate={gate}
           sheet={sheet} sheets={sheets} allClouds={allClouds} onSheet={goSheet}
           onSelect={select} onDecide={decide} onSign={signOff}
           print={print} marks={marks} markDecisions={markDecisions} onReadPhoto={readPhoto} onAddPhoto={addPhoto}
@@ -706,7 +726,7 @@ function Zoom({ cam }) {
   return <div className="rl-zoom" aria-hidden="true">{Math.round(cam.s * 100)}%</div>;
 }
 
-function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside, aside, showAside, onShowAside, onCountBack }) {
+function Ledger({ earlierMarks = [], res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside, aside, showAside, onShowAside, onCountBack }) {
   const shown = phase === 'ready' ? res.clouds.length : phase === 'clouds' ? res.clouds.length : 0;
   return (
     <aside className={`rl-ledger ${order.canEdit === false ? 'readonly' : ''}`} aria-label="Change ledger">
@@ -728,7 +748,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
                   {here.map((c) => <button key={c.id} className="delta" onClick={() => onSelect(c)} aria-label={`Show change ${c.n}`}>{c.n}</button>)}
                   {elsewhere.map((x) => <button key={x} className="rl-goto" onClick={() => onSheet(x)}>On sheet {x}</button>)}
                   {away && <button className="rl-goto" onClick={() => onSheet(named)}>{sheets.compared[named] ? `Nothing found on sheet ${named}` : `On sheet ${named}, not compared yet`}</button>}
-                  {!linked.length && !away && (decisions[`note${n.n}`]?.signedBy
+                  {!linked.length && !away && (decisions[`note${n.n}`]?.signedBy && (decisions[`note${n.n}`].noteText == null || decisions[`note${n.n}`].noteText === noteKey(n.text))
                     ? <em>No drawing change needed, said {decisions[`note${n.n}`].signedBy}{order.canEdit !== false && <> <button className="link" onClick={() => onDecide(`note${n.n}`, { status: null, signedBy: null, signedAt: null })}>Undo</button></>}</em>
                     : <><em>{sheets.count > 1 ? 'No change found on this sheet' : 'No change on the sheet'}</em>
                       {order.canEdit !== false && <button className="rl-goto" onClick={() => { onDecide(`note${n.n}`, { status: 'nochange' }); onSign(`note${n.n}`); }}>Sign: no drawing change needed</button>}</>)}
@@ -750,9 +770,10 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
         </ul>
         <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <SetAside list={aside[res.sheet] || []} showing={showAside} onShow={onShowAside} onCountBack={onCountBack} readOnly={order.canEdit === false} />
-        <OtherPdfs list={order.otherPdfs || []} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
+        <OtherPdfs list={(order.otherPdfs || []).filter((a) => Date.parse(a.created) > Date.parse(res.revB.created || 0) || +a.id > +res.revB.id)} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <Confirm gate={gate} d={decisions.__ack || {}} asideCount={Object.values(aside || {}).flat().length} revs={[res.revA, res.revB]} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
       </section>
+      <EarlierMarks list={earlierMarks} markDecisions={markDecisions} images={order.images || []} onDecideMark={onDecideMark} readOnly={order.canEdit === false} />
       <PrintSection order={order} res={res} print={print} marks={marks} markDecisions={markDecisions} sel={sel}
         onSelect={onSelect} onReadPhoto={onReadPhoto} onAddPhoto={onAddPhoto} onDecideMark={onDecideMark} onRaiseMark={onRaiseMark} onSetAside={onSetAside} />
       <footer className="rl-foot">
@@ -765,6 +786,30 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
 
 // Photos of printed sheets marked up in pen on the shop floor. A photo attached from the Jira mobile app
 // is read automatically; one can also be taken or chosen here.
+// Pen markups on an earlier photo of the print that nobody has answered: they still hold the release, so they are
+// listed here with the same answers (read that photo again to see them on the sheet).
+function EarlierMarks({ list, markDecisions, images, onDecideMark, readOnly }) {
+  const open = list.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status));
+  if (!open.length) return null;
+  const nameOf = (m) => images.find((a) => String(a.id) === /^p(\d+)-/.exec(m.id)?.[1])?.filename || 'an earlier photo';
+  return (
+    <section className="rl-prints">
+      <h2>From an earlier photo <span>{open.length}</span></h2>
+      <ul>
+        {open.map((m) => (
+          <li key={m.id} className="rl-mrow">
+            <span>Pen markup P{m.n} in zone {m.zone}, on {nameOf(m)}</span>
+            {!readOnly && <span className="rl-choices">
+              <button className="rl-btn quiet" onClick={() => onDecideMark(m.id, { status: 'covered' })}>Covered by a change</button>
+              <button className="rl-btn quiet" onClick={() => onDecideMark(m.id, { status: 'dismissed' })}>Dismiss</button>
+            </span>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function PrintSection({ order, res, print, marks, markDecisions, sel, onSelect, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark, onSetAside }) {
   const images = order.images || [];
   const fileRef = useRef(null);
@@ -896,13 +941,13 @@ function OtherPdfs({ list, decisions, onDecide, onSign, readOnly }) {
   if (!list.length) return null;
   return (
     <div className="rl-confirm">
-      <p>Also attached, not compared as drawing revisions:</p>
+      <p>Attached after {'the reviewed revision'}, and not named as a revision of this drawing. A new revision should be named like the others (for example "…_rev-E.pdf") so Redline compares it; anything else, set aside:</p>
       <ul className="rl-other-pdfs">
         {list.map((a) => {
           const d = decisions[`pdf${a.id}`] || {};
           return (
             <li key={a.id}><span>{a.filename}</span>
-              {d.signedBy ? <em> set aside by {d.signedBy}</em>
+              {d.signedBy ? <em> set aside by {d.signedBy}{!readOnly && <> <button className="link" onClick={() => onDecide(`pdf${a.id}`, { status: null, signedBy: null, signedAt: null })}>Undo</button></>}</em>
                 : !readOnly && <button className="rl-btn quiet" onClick={() => { onDecide(`pdf${a.id}`, { status: 'aside' }); onSign(`pdf${a.id}`); }}>Set aside: not a drawing</button>}
             </li>
           );

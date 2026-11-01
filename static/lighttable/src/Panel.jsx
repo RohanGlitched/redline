@@ -1,7 +1,7 @@
 // The issue panel: the release gate in one sentence, the changes by zone, and the way into the light table.
 import { useEffect, useState } from 'react';
 import { invoke, openLightTable } from './bridge.js';
-import { gateOf, valueSlip, noteSlip, slipOf, valueOkFor } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip, noteSlip, slipOf, valueOkFor, noteKey } from '../../../shared/gate.mjs';
 import { cloudPath } from './cloud.js';
 
 export default function Panel() {
@@ -112,7 +112,8 @@ export default function Panel() {
                       <span className="delta">{c.n}</span>
                       <span className="zone">{c.zone}</span>
                       <span className="lab">{label}</span>
-                      <span className="who">{d.signedBy ? `Signed, ${d.signedBy}` : st === 'declared' ? 'Needs sign-off' : ''}</span>
+                      <span className="who">{d.signedBy && d.status === 'declared' && d.noteText != null && o.notes?.find((n) => n.n === d.note) && noteKey(o.notes.find((n) => n.n === d.note).text) !== d.noteText
+                        ? 'Note edited since signed: sign again' : d.signedBy ? `Signed, ${d.signedBy}` : st === 'declared' ? 'Needs sign-off' : ''}</span>
                     </button>
                   </li>
                 )];

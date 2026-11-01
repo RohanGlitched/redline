@@ -165,7 +165,8 @@ resolver.define('saveReview', async (req) => {
   const signed = [];
   // Signatures are never taken from the browser's copy of a decision (shared/review.mjs settleSignatures)
   const asideTotal = (r.setAside || []).length + (sameRevs && !reread ? (stored.setAside || []).filter((a) => !(r.setAside || []).some((b) => b.id === a.id)).length : 0);
-  signed.push(...settleSignatures(r.decisions || {}, { beforeOf, notes, signed: req.payload.signed, confirmed: req.payload.confirmed, me, now, asideTotal }));
+  const staleNotes = [];
+  signed.push(...settleSignatures(r.decisions || {}, { beforeOf, notes, signed: req.payload.signed, confirmed: req.payload.confirmed, shown: req.payload.shown || {}, me, now, asideTotal, stale: staleNotes }));
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
   // an earlier comparison found, and what was found about a change (its box, text and values) stays as
   // first recorded, so a review cannot be emptied or softened after the fact.
@@ -182,7 +183,8 @@ resolver.define('saveReview', async (req) => {
     // (a newer photo never wipes a machinist's open question); answered ones of an earlier photo are history
     const mids = new Set((r.marks || []).map((m) => m.id));
     const answered = (m) => ['raised', 'covered', 'dismissed'].includes(stored.markDecisions?.[m.id]?.status);
-    const keep = (stored.marks || []).filter((m) => !mids.has(m.id) && (+stored.print?.id === +r.print?.id || !answered(m)));
+    const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
+    const keep = (stored.marks || []).filter((m) => !mids.has(m.id) && (+stored.print?.id === +r.print?.id || (!answered(m) && stillAttached(photoOf(m)))));
     r.marks = [...(r.marks || []), ...keep];
     r.markDecisions = { ...Object.fromEntries(keep.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v)), ...(r.markDecisions || {}) };
   }
@@ -211,6 +213,8 @@ resolver.define('saveReview', async (req) => {
     throw e;
   }
   try { await kvs.set(reviewKey(issue.id), review); } catch (e) { await kvs.delete(claim).catch(() => {}); throw e; }
+  // the validator's verdict on the work item as it is now (a PDF attached since, an unread photo), for the JQL copy
+  const verdict = verdictOf(issue.fields.attachment, review, notes);
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   try {
     const audit = (await kvs.get(auditKey(issue.id))) || [];
@@ -221,10 +225,10 @@ resolver.define('saveReview', async (req) => {
   try {
   await api.asApp().requestJira(route`/rest/api/3/issue/${key}/properties/${PROP}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gate: { status: gate.status, text: gate.text, open: gate.open }, revB: r.revB, version: review.version }),
+    body: JSON.stringify({ gate: { status: verdict.blocked ? 'blocked' : 'clear', text: verdict.text, open: verdict.open || 0 }, revB: r.revB, version: review.version }),
   });
   } catch (e) { console.warn('redline: review saved, search copy not written'); }
-  return { ok: true, version: review.version, gate, decisions: review.decisions };
+  return { ok: true, version: review.version, gate: verdict, decisions: review.decisions, staleNotes };
 });
 
 async function attach(key, name, mime, base64) {

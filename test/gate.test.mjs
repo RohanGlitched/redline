@@ -416,3 +416,16 @@ test('a note that does not read for a moment keeps the words its signature was g
   settleSignatures(d2, { beforeOf: () => d.c1, notes: notesV2, me: bob, now: 't3' });
   assert.equal(d2.c1.signedBy, undefined);
 });
+
+test('a signature for note words the reviewer never saw is not taken, and the note is named', () => {
+  const stored = { c1: { status: 'declared', note: 1 } };
+  const d = { c1: { status: 'declared', note: 1, signedAt: 't2' } };
+  const stale = [];
+  settleSignatures(d, { beforeOf: (id) => stored[id], notes: notesV2, signed: ['c1'], shown: { c1: 'Zone D2: bore Ø25 becomes Ø25.5' }, me: alice, now: 't2', stale });
+  assert.equal(d.c1.signedBy, undefined);
+  assert.deepEqual(stale, [1]);
+  const d2 = { note2: { status: 'nochange', signedAt: 't2' } };
+  const notes = [{ n: 2, text: 'Zone B4: add hole Ø8 thru' }];
+  settleSignatures(d2, { beforeOf: () => undefined, notes, signed: ['note2'], shown: { note2: 'Update the parts list supplier' }, me: alice, now: 't2', stale: [] });
+  assert.equal(d2.note2.signedBy, undefined);
+});

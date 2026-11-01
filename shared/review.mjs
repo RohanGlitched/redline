@@ -44,7 +44,9 @@ export function sameReview(a, b) {
 // drawing is right", is kept only while its decision and the words of the note it was given against are
 // unchanged; otherwise it is dropped. beforeOf(id) gives the stored decision this one continues (or undefined).
 // Changes `decisions` in place; returns the ids stamped in this save.
-export function settleSignatures(decisions, { beforeOf, notes = [], signed = [], confirmed = [], me, now, asideTotal = 0 }) {
+// shown: id -> the note's words the reviewer had on screen; a signature for words that have changed since is not taken
+// (its note number is returned in stale).
+export function settleSignatures(decisions, { beforeOf, notes = [], signed = [], confirmed = [], shown = {}, me, now, asideTotal = 0, stale = [] }) {
   const signedIds = new Set(signed.map(String)), confirmedIds = new Set(confirmed.map(String)), stamped = [];
   for (const [id, d] of Object.entries(decisions)) {
     const before = beforeOf(id);
@@ -55,6 +57,9 @@ export function settleSignatures(decisions, { beforeOf, notes = [], signed = [],
     const noteText = noteNow ? noteKey(noteNow.text) : noteNo != null ? (before?.noteText ?? null) : null;
     const same = !!before && before.status === d.status && (before.note ?? null) === (d.note ?? null)
       && (before.noteText == null || noteText == null || before.noteText === noteText);
+    const seen = shown[id] == null || noteText == null || noteKey(shown[id]) === noteText;
+    if (!seen && (signedIds.has(id) || confirmedIds.has(id)) && !stale.includes(noteNo)) stale.push(noteNo);
+    if (!seen) { signedIds.delete(id); confirmedIds.delete(id); }
     if (signedIds.has(id) && d.signedAt) {
       d.signedById = me.accountId; d.signedBy = me.displayName; d.signedAt = now; stamped.push(id);
       if (id === '__ack') d.asideCount = asideTotal; else delete d.asideCount;
