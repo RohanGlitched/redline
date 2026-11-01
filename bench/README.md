@@ -23,7 +23,7 @@ It records the box of every edit, then renders revision A and revision B at 150 
 - paper tint
 - JPEG quality 45 to 80
 
-`visible.py` drops edits that change no visible ink, such as a zero-area path. Neither a person nor a tool can see those.
+`visible.py` drops edits that change fewer than 25 pixels of ink at 150 dpi (a zero-area path, or a stroke nudged by a fraction of its width): too little for a person to see on the sheet, and below what the engine reports.
 
 **Marked-up prints.** `photos.py` builds 60 simulated phone photos of NIST pages "printed" on warm paper, each with 1 to 4 red-pen markups: circles, clouds, arrows, strike-throughs and handwritten values. Each print lies on a desk at a random perspective, with:
 
@@ -62,4 +62,4 @@ The generated rasters take about 4 GB, so they are not in the repository. Seeds 
 - The rescans and phone photos are simulated. Real scans with folds, coffee stains or a sheet partly out of frame are not covered yet.
 - A change smaller than about 25 dark pixels at 150 dpi (roughly a 0.4 mm stroke) is below what the engine reports.
 - Two edits within about 7 mm of each other are drawn as one cloud on purpose, the way a drafter would cloud them.
-- A feature moved by less than about 0.85 mm on paper can look like a re-plot nudge: under about 0.4 mm it is not reported, and up to about 0.7 mm it goes to the Set aside list. The planted moves here are 1.5 to 4 mm. That is why the release gate needs a person to confirm, by name, whatever was set aside.
+- A feature moved by less than about 0.7 mm on paper can look like a re-plot nudge: under about 0.4 mm it is not reported, and from there up to about 0.7 mm it goes to the Set aside list. The planted moves here are 1.5 to 4 mm. That is why the release gate needs a person to confirm, by name, whatever was set aside.
