@@ -2,12 +2,13 @@
 import { useEffect, useState } from 'react';
 import { invoke, openLightTable, getContext } from './bridge.js';
 import { gateOf } from './LightTable.jsx';
+import { cloudPath } from './cloud.js';
 
 export default function Panel() {
   const [o, setO] = useState(null);
   const [err, setErr] = useState(null);
   const [adding, setAdding] = useState(false);
-  const load = () => invoke('getChangeOrder').then(setO).catch((e) => setErr(e.message));
+  const load = () => invoke('getChangeOrder', { withThumbs: true }).then(setO).catch((e) => setErr(e.message));
 
   // Two public-domain NIST drawing revisions ship inside the app, so anyone can try Redline on an empty site.
   async function addSample() {
@@ -56,6 +57,8 @@ export default function Panel() {
   }
   // the verdict the backend recomputed when the review was saved (the same one the release gate uses)
   const gate = r ? (r.gate ? { ...r.gate, blocked: r.gate.status === 'blocked' } : gateOf(r.clouds, r.decisions)) : null;
+  const multi = (r?.sheets?.count || 1) > 1;
+  const thumbs = o.thumbs || [];
   return (
     <div className="rl-panel">
       <div className={`rl-panel-gate ${!gate ? 'new' : gate.blocked ? 'blocked' : 'clear'}`}>
@@ -67,18 +70,78 @@ export default function Panel() {
         <button className="rl-btn primary" onClick={open}>{gate ? 'Open light table' : 'Compare revisions'}</button>
       </div>
       {r && (
-        <ul className="rl-panel-list">
-          {r.clouds.map((c) => {
-            const d = r.decisions[c.id] || {};
-            const label = d.status === 'rejected' ? 'Sent back' : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : 'Not in notes';
-            return (
-              <li key={c.id} className={d.status === 'declared' || d.status === 'accepted' ? (d.signedBy ? 'signed' : 'declared') : d.status === 'rejected' ? 'rejected' : 'undeclared'}>
-                <span className="delta">{c.n}</span><span>Zone {c.zone}</span><span className="lab">{label}</span><span className="who">{d.signedBy ? `Signed, ${d.signedBy}` : ''}</span>
-              </li>
-            );
-          })}
-        </ul>
+        <div className={`rl-panel-body ${thumbs.length ? '' : 'solo'}`}>
+          {thumbs.length > 0 && (
+            <div className={`rl-thumbs n${Math.min(thumbs.length, 3)}`}>
+              {thumbs.map((t) => (
+                <Thumb key={t.sheet} t={t} label={multi ? `Sheet ${t.sheet}` : null} onOpen={open}
+                  clouds={r.clouds.filter((c) => (c.sheet || 1) === t.sheet)} decisions={r.decisions} />
+              ))}
+            </div>
+          )}
+          {r.clouds.length > 0 ? (
+            <ul className="rl-panel-list">
+              {r.clouds.flatMap((c, i) => {
+                const d = r.decisions[c.id] || {};
+                const sh = c.sheet || 1;
+                const head = multi && sh !== (r.clouds[i - 1]?.sheet || 1) || (multi && i === 0)
+                  ? [<li key={`h${sh}`} className="sheet-head">Sheet {sh}</li>] : [];
+                const st = cloudStatus(d);
+                const label = d.status === 'rejected' ? 'Sent back' : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : 'Not in notes';
+                return [...head, (
+                  <li key={c.id} className={st}>
+                    <span className="delta">{c.n}</span>
+                    <span className="zone">{c.zone}</span>
+                    <span className="lab">{label}</span>
+                    <span className="who">{d.signedBy ? `Signed, ${d.signedBy}` : st === 'declared' ? 'Needs sign-off' : ''}</span>
+                  </li>
+                )];
+              })}
+            </ul>
+          ) : <p className="rl-panel-none">No differences between the revisions.</p>}
+        </div>
+      )}
+      {r?.savedAt && (
+        <p className="rl-panel-foot">
+          Last saved{o.savedBy ? ` by ${o.savedBy}` : ''} {ago(r.savedAt)}{multi ? `. ${r.sheets.done?.length || 0} of ${r.sheets.count} sheets compared.` : '.'}
+        </p>
       )}
     </div>
   );
+}
+
+const cloudStatus = (d) => (d.status === 'rejected' ? 'rejected' : d.status === 'declared' || d.status === 'accepted' ? (d.signedBy ? 'signed' : 'declared') : 'undeclared');
+
+// Revision B of one sheet, as a diazo print, with every change clouded in the colour of its decision.
+function Thumb({ t, clouds, decisions, label, onOpen }) {
+  const k = t.w / 560; // stroke widths in thumbnail pixels
+  return (
+    <figure className="rl-thumb">
+      <button onClick={onOpen} aria-label={`Open ${label || 'the sheet'} in the light table, ${clouds.length} ${clouds.length === 1 ? 'change' : 'changes'}`}>
+        <img src={`data:image/jpeg;base64,${t.data}`} alt="" />
+        <svg viewBox={`0 0 ${t.w} ${t.h}`} aria-hidden="true">
+          {clouds.map((c, i) => {
+            const [x0, y0, x1, y1] = c.box;
+            return (
+              <g key={c.id} className={`tc ${cloudStatus(decisions[c.id] || {})}`} style={{ '--i': i }}>
+                <path d={cloudPath(x0, y0, x1, y1, 14 * k, 12 * k)} strokeWidth={3 * k} pathLength="1" />
+                <g transform={`translate(${x1 + 16 * k} ${y0 - 14 * k}) scale(${k * 1.5})`}>
+                  <path d="M0,-15 L15,11 L-15,11 Z" />
+                  <text y="6" textAnchor="middle">{c.n}</text>
+                </g>
+              </g>
+            );
+          })}
+        </svg>
+      </button>
+      {label && <figcaption>{label}<span>{clouds.length ? `${clouds.length} ${clouds.length === 1 ? 'change' : 'changes'}` : 'No changes'}</span></figcaption>}
+    </figure>
+  );
+}
+
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  const [n, u] = s < 3600 ? [Math.round(s / 60), 'minute'] : s < 86400 ? [Math.round(s / 3600), 'hour'] : [Math.round(s / 86400), 'day'];
+  return `${n} ${u}${n === 1 ? '' : 's'} ago`;
 }

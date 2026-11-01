@@ -96,6 +96,21 @@ export default function LightTable() {
   const overlayCanvas = useCanvasImage(useMemo(() => res && composite(res.hiA, res.hiBw), [res]));
   const aCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiA, [43, 47, 54]), [res]));
   const bCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiBw, [44, 74, 154]), [res]));
+  // After a sheet is compared, send the issue panel a small diazo-blue picture of revision B for it.
+  const thumbsSent = useRef(new Set());
+  useEffect(() => {
+    if (!res || !bCanvas) return;
+    const id = `${res.revB.id}:${res.sheet}`;
+    if (thumbsSent.current.has(id)) return;
+    thumbsSent.current.add(id);
+    const w = 560, h = Math.round((w * bCanvas.height) / bCanvas.width);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+    g.imageSmoothingQuality = 'high'; g.drawImage(bCanvas, 0, 0, w, h);
+    const data = c.toDataURL('image/jpeg', 0.72).split(',')[1];
+    // boxes are stored in analysis pixels, so the panel scales them by the analysis size
+    invoke('saveThumb', { revB: res.revB.id, sheet: res.sheet, w: res.A.w, h: res.A.h, data }).catch(() => thumbsSent.current.delete(id));
+  }, [res, bCanvas]);
   const printCanvas = useCanvasImage(useMemo(() => (print?.status === 'done' ? print.result.flat : null), [print]));
 
   // Fit the sheet to the stage, then play the one orchestrated moment: the table lights up, clouds draw.
@@ -156,6 +171,7 @@ export default function LightTable() {
   }, [phase]);
 
   async function addPhoto(file) {
+    if (readOnly) return;
     setPrint({ status: 'reading' });
     try {
       const up = await photoForUpload(file);
@@ -166,8 +182,11 @@ export default function LightTable() {
   }
 
   const marks = print?.status === 'done' ? print.result.marks : [];
-  const decideMark = (id, patch) => setMarkDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
+  // someone who can view the work item but not edit it sees the review without the controls to change it
+  const readOnly = order?.canEdit === false;
+  const decideMark = (id, patch) => { if (!readOnly) setMarkDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); };
   async function raiseMark(m) {
+    if (readOnly) return;
     decideMark(m.id, { status: 'raising' });
     try {
       const crop = cropJpeg(print.result.flat, m);
@@ -182,6 +201,7 @@ export default function LightTable() {
   const gate = useMemo(() => gateOf(allClouds, decisions, marks, markDecisions, sheetInfo), [allClouds, decisions, marks, markDecisions, sheets]);
   useEffect(() => {
     if (!res || !Object.keys(decisions).length) return;
+    if (readOnly) { setSaved('View only'); return; }
     const t = setTimeout(async () => {
       setSaved('Saving');
       try {
@@ -194,6 +214,7 @@ export default function LightTable() {
           print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename } : null,
           marks: marks.map(({ id, n, zone, x0, y0, x1, y1 }) => ({ id, n, zone, box: [x0, y0, x1, y1] })), markDecisions,
         } });
+        if (out?.readOnly) { setSaved('View only: you cannot edit ' + (order?.key || 'this work item')); return; }
         if (out?.conflict) {
           // someone else saved in between: take their decisions, then let this reviewer carry on
           versionRef.current = out.review.version || 0;
@@ -218,7 +239,7 @@ export default function LightTable() {
   }, []);
 
   const select = (c) => { setSel(c.id); flyTo(c); };
-  const decide = (id, patch) => setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
+  const decide = (id, patch) => { if (!readOnly) setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); };
   const signOff = (id) => decide(id, { signedBy: order.user.displayName, signedAt: new Date().toISOString() });
 
   // Keyboard: arrows walk the clouds, digits declare against a note line, S signs off, F fits the sheet.
@@ -452,7 +473,8 @@ function Zoom({ cam }) {
 function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark }) {
   const shown = phase === 'ready' ? res.clouds.length : phase === 'clouds' ? res.clouds.length : 0;
   return (
-    <aside className="rl-ledger" aria-label="Change ledger">
+    <aside className={`rl-ledger ${order.canEdit === false ? 'readonly' : ''}`} aria-label="Change ledger">
+      {order.canEdit === false && <p className="rl-ro">You can view this review. Only people who can edit {order.key} can declare, accept or sign off changes.</p>}
       <section className="rl-notes">
         <h2>Change notes</h2>
         <ol>
@@ -478,7 +500,7 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
           {!order.notes.length && <li className="none">The work item has no numbered change notes. Number each change in the description, for example "1. Zone D3: bore Ø25 to Ø25.5".</li>}
         </ol>
       </section>
-      <NeedsYou res={res} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} />
+      <NeedsYou res={res} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} />
       <section className="rl-found">
         <h2>Found on the sheet <span>{res.clouds.length}</span></h2>
         <ul>
@@ -556,7 +578,7 @@ function PrintSection({ order, res, print, marks, markDecisions, sel, onSelect, 
       )}
       {!images.length && <p className="rl-hint">Photograph the printed sheet with its pen markups and attach the photo to this work item from the Jira mobile app, or add it here. Redline lines it up with {revName(res.revB)} and lists every markup.</p>}
       <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files[0] && onAddPhoto(e.target.files[0])} />
-      <button className="rl-btn" onClick={() => fileRef.current.click()}>Add a photo of a marked-up print</button>
+      <button className="rl-btn rl-print-add" onClick={() => fileRef.current.click()}>Add a photo of a marked-up print</button>
     </section>
   );
 }
@@ -575,7 +597,7 @@ function MarkCrop({ flat, m }) {
 }
 
 // Sticky at the top of the ledger: how many things still need a person, and a button to the next one.
-function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect }) {
+function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect, readOnly }) {
   const todo = [
     ...res.clouds.filter((c) => { const d = decisions[c.id] || {}; return d.status === 'rejected' ? false : !(d.status === 'declared' || d.status === 'accepted') || !d.signedBy; }),
     ...marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)),
@@ -586,7 +608,7 @@ function NeedsYou({ res, decisions, marks, markDecisions, sel, onSelect }) {
   const next = todo[(i + 1) % todo.length];
   return (
     <div className={`rl-needs ${todo.length ? '' : 'done'}`}>
-      <p>{todo.length ? <><b>{todo.length} of {total}</b> need you</> : <><b>All {total}</b> answered</>}</p>
+      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? "needs a decision" : "need a decision") : "need you"}</> : <><b>All {total}</b> answered</>}</p>
       {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{i === -1 ? 'Start' : 'Next'}</button>}
     </div>
   );

@@ -38,8 +38,12 @@ async function devInvoke(fn, payload = {}) {
   await new Promise((r) => setTimeout(r, 120));
   if (fn === 'getChangeOrder') {
     const review = JSON.parse(localStorage.getItem(REVIEW_KEY) || 'null');
-    return { ...SAMPLE, review };
+    const thumbs = (review?.sheets?.done || [1]).map((n) => JSON.parse(localStorage.getItem(`${REVIEW_KEY}-thumb-${n}`) || 'null'))
+      .filter((t) => t && t.revB === review?.revB?.id);
+    const canEdit = new URLSearchParams(location.search).get('readonly') !== '1';
+    return { ...SAMPLE, review, canEdit, ...(payload.withThumbs ? { thumbs, savedBy: review ? SAMPLE.user.displayName : null } : {}) };
   }
+  if (fn === 'saveThumb') { localStorage.setItem(`${REVIEW_KEY}-thumb-${payload.sheet}`, JSON.stringify(payload)); return { ok: true }; }
   if (fn === 'getAttachment') {
     const a = [...SAMPLE.attachments, ...SAMPLE.images].find((x) => x.id === payload.id);
     const buf = new Uint8Array(await (await fetch(a.url)).arrayBuffer());
@@ -47,7 +51,8 @@ async function devInvoke(fn, payload = {}) {
     return { size: buf.length, data: btoa(s) };
   }
   if (fn === 'raiseMarkup') return { key: 'ENG-' + (10 + Math.floor(Math.random() * 80)) };
-  if (fn === 'saveReview') { localStorage.setItem(REVIEW_KEY, JSON.stringify(payload.review)); return { ok: true }; }
+  if (fn === 'saveReview' && new URLSearchParams(location.search).get('readonly') === '1') return { readOnly: true };
+  if (fn === 'saveReview') { localStorage.setItem(REVIEW_KEY, JSON.stringify({ ...payload.review, savedAt: new Date().toISOString() })); return { ok: true }; }
   throw new Error('no dev handler for ' + fn);
 }
 

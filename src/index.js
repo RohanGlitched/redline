@@ -77,7 +77,33 @@ const issueKey = (req) => req.context.extension.issue?.key || req.context.extens
 resolver.define('getChangeOrder', async (req) => {
   const o = await loadChangeOrder(issueKey(req));
   const me = await (await jira(route`/rest/api/3/myself`)).json();
-  return { ...o, user: { accountId: me.accountId, displayName: me.displayName } };
+  const out = { ...o, user: { accountId: me.accountId, displayName: me.displayName }, canEdit: await canEdit(o.key) };
+  const r = o.review;
+  // the issue panel also shows who saved the review last and a small picture of each compared sheet
+  if (req.payload?.withThumbs && r) {
+    if (r.savedById) {
+      const u = r.savedById === me.accountId ? me : await jira(route`/rest/api/3/user?accountId=${r.savedById}`).then((x) => x.json()).catch(() => null);
+      out.savedBy = u?.displayName || null;
+    }
+    const done = (r.sheets?.done || [1]).slice(0, 6);
+    const thumbs = await Promise.all(done.map((n) => kvs.get(thumbKey(o.id, n))));
+    // a picture of an older revision B would put today's clouds on yesterday's drawing, so it is dropped
+    out.thumbs = thumbs.map((t, i) => (t && t.revB === r.revB?.id ? { sheet: done[i], w: t.w, h: t.h, data: t.data } : null)).filter(Boolean);
+  }
+  return out;
+});
+
+// A small JPEG of revision B for one sheet, drawn by the light table after it compares that sheet.
+const thumbKey = (issueId, sheet) => `thumb:${issueId}:${sheet}`;
+resolver.define('saveThumb', async (req) => {
+  const { revB, sheet, w, h, data } = req.payload || {};
+  // KVS values are capped well under the bridge limit; a thumbnail is ~30 KB, so anything far bigger is refused
+  if (typeof data !== 'string' || data.length > 180000 || !(sheet >= 1 && sheet <= 500)) return { ok: false };
+  if (!(await canEdit(issueKey(req)))) return { ok: false };
+  const issue = await (await jira(route`/rest/api/3/issue/${issueKey(req)}?fields=summary`)).json();
+  if (!issue.id) return { ok: false };
+  await kvs.set(thumbKey(issue.id, sheet), { revB, w, h, data });
+  return { ok: true };
 });
 
 // The bridge cannot carry binary bodies, so the resolver fetches the PDF as the user (their permissions
@@ -93,8 +119,17 @@ resolver.define('getAttachment', async (req) => {
 
 // Save a review. The browser sends what people decided; the backend checks nobody saved in between,
 // recomputes the gate itself and records who signed each change.
+// The review is kept in app storage, which the app writes with its own rights, so the user's right to
+// edit the work item is checked first: someone who can only view it can read the review but not sign it.
+async function canEdit(key) {
+  const res = await jira(route`/rest/api/3/mypermissions?issueKey=${key}&permissions=EDIT_ISSUES`);
+  if (!res.ok) return false;
+  return !!(await res.json()).permissions?.EDIT_ISSUES?.havePermission;
+}
+
 resolver.define('saveReview', async (req) => {
   const key = issueKey(req);
+  if (!(await canEdit(key))) return { readOnly: true };
   const issue = await (await jira(route`/rest/api/3/issue/${key}?fields=summary`)).json();
   const stored = await kvs.get(reviewKey(issue.id));
   const base = req.payload.baseVersion || 0;

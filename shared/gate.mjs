@@ -19,8 +19,8 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   if (unseen) text = `${unseen} of ${sheets.count} sheets ${unseen === 1 ? 'is' : 'are'} not compared yet`;
   else if (!clouds.length && !marks.length) text = 'No differences found between the revisions';
   else if (rejected) text = `${rejected} ${rejected === 1 ? 'change was' : 'changes were'} sent back to the drafter`;
-  else if (open) text = `${open} ${open === 1 ? 'change on the sheet is' : 'changes on the sheet are'} not in the change notes`;
-  else if (markups) text = `${markups} pen ${markups === 1 ? 'markup on the printed sheet needs' : 'markups on the printed sheet need'} an answer`;
+  else if (open) text = `${open} ${open === 1 ? 'change on the drawing is' : 'changes on the drawing are'} not in the change notes`;
+  else if (markups) text = `${markups} pen ${markups === 1 ? 'markup on the printed sheet needs' : 'markups on the printed sheets need'} an answer`;
   else if (unsigned) text = `${unsigned} declared ${unsigned === 1 ? 'change needs' : 'changes need'} a sign-off`;
   else text = `All ${clouds.length} changes declared and signed off`;
   return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, markups, unseen, text };
