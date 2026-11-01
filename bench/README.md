@@ -29,13 +29,13 @@ It records the box of every edit, then renders revision A and revision B at 150 
 - blur and noise
 - JPEG compression
 
-## Results (engine as shipped, Node 24, one CPU core)
+## Results (engine as shipped, Node 24, one CPU core, measured Nov 1 2026)
 
 | Test | Result |
 |---|---|
-| Digital revisions, 352 pairs, 432 visible edits | 99.8% of edits found (431 of 432), no false clouds on unchanged sheets, 0.25 s per sheet |
-| Rescanned revision B | 91% of edits found, about 5 false clouds per sheet (a reviewer dismisses them in one key press) |
-| Photographed prints, 60 photos, 160 pen marks | 160 of 160 marks found, no false marks, sheet found in all 60 photos, about 1 s per photo |
+| Digital revisions, 352 pairs, 432 visible edits | 99.8% of edits found (431 of 432), no false clouds on unchanged sheets, 0.11 false clouds per changed sheet, about 0.4 s per sheet |
+| Rescanned revision B, same 352 pairs | 91.7% of edits found (396 of 432), 2.7 false clouds per sheet |
+| Photographed prints, 60 photos, 160 pen marks | 160 of 160 marks found, no false marks, sheet found in all 60 photos, about 0.3 s per photo |
 | Registration on rescans | median rotation error under 0.01° |
 
 ## Run it

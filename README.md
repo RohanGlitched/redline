@@ -49,8 +49,8 @@ On 352 revision pairs built from public-domain NIST test drawings, with edits pl
 
 | | Result |
 |---|---|
-| Digital revisions | 431 of 432 visible edits found, no false clouds on unchanged sheets, 0.25 s a sheet |
-| Rescanned revision B (rotated, scaled, blurred, noisy, JPEG) | 91% of edits found, about 5 false clouds a sheet |
+| Digital revisions | 431 of 432 visible edits found, no false clouds on unchanged sheets, about 0.4 s a sheet |
+| Rescanned revision B (rotated, scaled, blurred, noisy, JPEG) | 396 of 432 edits found (91.7%), 2.7 false clouds a sheet |
 | Phone photos of marked-up prints (60 photos, 160 pen marks) | 160 of 160 marks found, no false marks |
 
 The scripts and the method are in [`bench/`](bench/). Anyone with the NIST drawings can run them again.
