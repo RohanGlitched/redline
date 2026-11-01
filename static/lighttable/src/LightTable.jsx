@@ -361,8 +361,14 @@ export default function LightTable() {
 
   // Pan with drag, zoom around the pointer with the wheel.
   const drag = useRef(null);
-  const onPointerDown = (e) => { if (e.target.closest('.rl-swipe-handle')) return; drag.current = { x: e.clientX, y: e.clientY, cam: camRef.current }; e.currentTarget.setPointerCapture(e.pointerId); };
-  const onPointerMove = (e) => { const d = drag.current; if (!d) return; setCam({ ...d.cam, x: d.cam.x + e.clientX - d.x, y: d.cam.y + e.clientY - d.y }); };
+  // the sheet pans by dragging; the pointer is only captured once it has moved a few pixels, so a plain
+  // click still reaches the cloud or pen markup under it
+  const onPointerDown = (e) => { if (e.target.closest('.rl-swipe-handle')) return; drag.current = { x: e.clientX, y: e.clientY, cam: camRef.current, id: e.pointerId, el: e.currentTarget, moved: false }; };
+  const onPointerMove = (e) => {
+    const d = drag.current; if (!d) return;
+    if (!d.moved) { if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) return; d.moved = true; d.el.setPointerCapture?.(d.id); }
+    setCam({ ...d.cam, x: d.cam.x + e.clientX - d.x, y: d.cam.y + e.clientY - d.y });
+  };
   const onPointerUp = () => { drag.current = null; };
   const onWheel = (e) => {
     const r = stageRef.current.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;

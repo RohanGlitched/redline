@@ -345,3 +345,5 @@ button { font: inherit; color: inherit; }
 .rl-panel-reasons { margin: 2px 0 0; padding-left: 18px; }
 .rl-panel-reasons li { margin: 1px 0; }
 .rl-panel-gate > .dot { align-self: start; margin-top: 6px; } /* sits on the "Release blocked" line, not beside the list */
+.rl-cloud > path, .rl-mark > ellipse { pointer-events: all; } /* the inside of a cloud or pen ring selects it too, not just its outline */
+.rl-cloud, .rl-mark { cursor: pointer; }
