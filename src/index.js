@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs, pairOf } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 import { ENGINE_VERSION, matchChanges, sameReview, settleSignatures, carriedChanges, notesDoneBefore } from '../shared/review.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
@@ -38,7 +38,7 @@ export async function loadChangeOrder(key) {
   const pick = drawingPdfs(issue.fields.attachment);
   const attachments = pick.pdfs.map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, author: a.author?.displayName }));
   const images = (issue.fields.attachment || [])
-    .filter((a) => /^image\/(jpeg|png|webp)$/.test(a.mimeType))
+    .filter((a) => /^image\/(jpeg|png|webp|heic|heif)$/.test(a.mimeType))
     .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id)
     .map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, mimeType: a.mimeType, author: a.author?.displayName }));
   return {
@@ -51,6 +51,7 @@ export async function loadChangeOrder(key) {
     status: issue.fields.status?.name,
     notes: notesFromAdf(issue.fields.description),
     attachments,
+    pair: pairOf(pick.pdfs, review).map((a) => +a.id),
     drawingConflict: pick.conflict || 0,
     // PDFs that are not this drawing's revisions (an ECO form, a test report): each can be set aside by name
     otherPdfs: (issue.fields.attachment || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')) && !pick.pdfs.some((p) => +p.id === +a.id))
@@ -144,7 +145,7 @@ resolver.define('saveReview', async (req) => {
   const r = req.payload.review, now = new Date().toISOString();
   // a review is always of the two newest PDF revisions on the work item, named by id
   const { pdfs } = drawingPdfs(issue.fields.attachment);
-  const [newA, newB] = pdfs.slice(-2);
+  const [newA, newB] = pairOf(pdfs, stored);
   if (!newA || !newB || +r.revA?.id !== +newA.id || +r.revB?.id !== +newB.id) return { stale: true, error: 'This review is not of the two newest drawing revisions. Reopen the light table to compare them.' };
   if (r.engine !== ENGINE_VERSION) return { stale: true, error: 'This light table is out of date. Close it and open it again to load the current version of Redline.' };
   // A re-read is a review from this exact engine version replacing one from an older version: its changes
@@ -190,7 +191,8 @@ resolver.define('saveReview', async (req) => {
     const mids = new Set((r.marks || []).map((m) => m.id));
     const answered = (m) => ['raised', 'covered', 'dismissed'].includes(stored.markDecisions?.[m.id]?.status);
     const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
-    const keep = (stored.marks || []).filter((m) => !mids.has(m.id) && (+stored.print?.id === +r.print?.id || (!answered(m) && stillAttached(photoOf(m)))));
+    // each markup by its own photo: the current photo's, and earlier photos' unanswered ones while they are attached
+    const keep = (stored.marks || []).filter((m) => !mids.has(m.id) && (photoOf(m) === +r.print?.id || (!answered(m) && stillAttached(photoOf(m)))));
     r.marks = [...(r.marks || []), ...keep];
     r.markDecisions = { ...Object.fromEntries(keep.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v)), ...(r.markDecisions || {}) };
   }

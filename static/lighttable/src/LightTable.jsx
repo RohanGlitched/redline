@@ -110,7 +110,7 @@ export default function LightTable() {
         const pdfs = o.attachments;
         if (o.drawingConflict) { setError(`${o.drawingConflict} different drawings are attached with revisions. Redline compares one drawing per change order: move each drawing's revisions to its own change order.`); return; }
         if (pdfs.length < 2) { setError('Attach two PDF revisions of the drawing to this work item, oldest first.'); return; }
-        const [revA, revB] = pdfs.slice(-2);
+        const [revA, revB] = o.pair?.length === 2 ? o.pair.map((id) => pdfs.find((p) => +p.id === +id)) : pdfs.slice(-2);
         if (o.review?.revB?.id === revB.id) {
           // sheets compared in an earlier session count as compared, with their saved changes
           const bySheet = {};
@@ -202,7 +202,11 @@ export default function LightTable() {
       });
       setPrint({ att, status: 'done', result }); setMode((m) => (sheetRef.current === 1 ? 'print' : m));
       setTimeout(() => setFlatten(null), 450);
-    } catch (e) { setPrint({ att, status: 'error', error: e.message || String(e) }); }
+    } catch (e) {
+      // most browsers cannot decode HEIC, the iPhone's default: say so, and how to go on
+      const heic = /heic|heif/i.test(att?.mimeType || '') || /\.hei[cf]$/i.test(att?.filename || '');
+      setPrint({ att, status: 'error', error: heic ? 'This photo is HEIC, which this browser cannot read. Attach it again as a JPEG (on an iPhone: Settings, Camera, Formats, Most Compatible), or set it aside as not a print.' : e.message || String(e) });
+    }
   }, [res]);
 
   useEffect(() => {
@@ -295,7 +299,14 @@ export default function LightTable() {
     if (+rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id) return (rv.clouds || []).filter((c) => c.carried);
     return carriedChanges(rv, res.revA);
   }, [order, res?.revA?.id, res?.revB?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [serverGate, setServerGate] = useState(null);
   const allClouds = useMemo(() => [...Object.values(sheets.compared).flat(), ...carried], [sheets, carried]);
+  // set-aside differences of every compared sheet, including sheets compared in an earlier session and not loaded now
+  const asideTotal = useMemo(() => {
+    const here = Object.values(aside).flat().length, loaded = new Set(Object.keys(aside).map(Number));
+    const rv = order?.review, same = rv && res && +rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id;
+    return here + (same ? (rv.setAside || []).filter((a) => !loaded.has(+a.sheet)).length : 0);
+  }, [aside, order, res?.revA?.id, res?.revB?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const notesDone = useMemo(() => {
     const rv = order?.review;
     if (!rv || !res) return [];
@@ -303,15 +314,16 @@ export default function LightTable() {
   }, [order, res?.revA?.id, res?.revB?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => {
-    const g = gateOf(allClouds, decisions, [...marks, ...earlierMarks], markDecisions, sheetInfo, order?.notes, { setAside: Object.values(aside).flat().length, notesDone });
+    const g = gateOf(allClouds, decisions, [...marks, ...earlierMarks], markDecisions, sheetInfo, order?.notes, { setAside: asideTotal, notesDone });
     const images = order?.images || [];
     const newest = images[images.length - 1];
     const photoOk = !newest || ((print?.status === 'done' || print?.status === 'aside') && String(print.att?.id) === String(newest.id));
     const newerPdfs = (order?.otherPdfs || []).filter((a) => (Date.parse(a.created) > Date.parse(res?.revB?.created || 0) || +a.id > +(res?.revB?.id || 0)) && !decisions[`pdf${a.id}`]?.signedBy);
-    if (newerPdfs.length) g.reasons = [...(g.reasons || []), { kind: 'pdf', short: `${newerPdfs.length} newer PDF not compared` }], g.blocked = true, g.text = [g.parts?.length ? g.text : null, `${newerPdfs.map((a) => a.filename).join(', ')} attached after the reviewed revision`].filter(Boolean).join('; ');
+    if (newerPdfs.length) g.reasons = [...(g.reasons || []), { kind: 'pdf', short: `${newerPdfs.length} newer ${newerPdfs.length === 1 ? 'PDF' : 'PDFs'} not compared` }], g.blocked = true, g.text = [g.parts?.length ? g.text : null, `${newerPdfs.map((a) => a.filename).join(', ')} attached after the reviewed revision`].filter(Boolean).join('; ');
+    if (!g.blocked && serverGate?.blocked) { g.blocked = true; g.text = serverGate.text; g.reasons = [{ kind: 'server', short: 'held in Jira, see the reason' }]; }
     const why = !newest || photoOk ? null : !print || print.status === 'reading' ? 'photo not read yet' : print.status === 'error' ? 'photo could not be read: set it aside' : 'newest photo not read';
     return why ? { ...g, blocked: true, reasons: [...(g.reasons || []), { kind: 'photo', short: why }], text: [g.parts?.length ? g.text : null, `the ${why}`].filter(Boolean).join('; ') } : g;
-  }, [allClouds, decisions, marks, earlierMarks, markDecisions, sheets, order, print, aside, notesDone]);
+  }, [allClouds, decisions, marks, earlierMarks, markDecisions, sheets, order, print, aside, notesDone, asideTotal, serverGate]);
   // Saves go one at a time: a decision made while a save is on its way waits for it, then saves with
   // the new version, so two quick decisions never look like someone else saving in between.
   const saving = useRef(false), pending = useRef(false);
@@ -347,7 +359,10 @@ export default function LightTable() {
           // meanwhile would send the old decisions on top of theirs: it is dropped, and the merged state saves next
           pending.current = false;
           // their decisions replace this reviewer's unsaved ones, signatures included: nothing is left to stamp
-          const lost = Object.keys(decisions).filter((id) => JSON.stringify(decisions[id]) !== JSON.stringify(out.review.decisions?.[id])).length;
+          const tuple = (d) => JSON.stringify([d?.status ?? null, d?.note ?? null, !!d?.signedAt, !!d?.valueOk]);
+          const saved = new Map(savedSnap.current ? JSON.parse(savedSnap.current)[0].map(([id, ...t]) => [id, JSON.stringify(t)]) : []);
+          const lost = Object.keys(decisions).filter((id) => tuple(decisions[id]) !== tuple(out.review.decisions?.[id]) && (!saved.has(id) || tuple(decisions[id]) !== saved.get(id))).length;
+          setOrder((o) => ({ ...o, review: out.review }));
           signedNow.current.clear(); confirmedNow.current.clear();
           versionRef.current = out.review.version || 0;
           setDecisions(out.review.decisions || {}); setMarkDecisions(out.review.markDecisions || {});
@@ -380,6 +395,7 @@ export default function LightTable() {
           return changed ? next : cur;
         });
         savedSnap.current = snapOf(decisions, markDecisions); setCloseWarned(false);
+        setServerGate(out?.gate ? { blocked: !!out.gate.blocked || out.gate.status === 'blocked', text: out.gate.text } : null);
         setSaved(`Saved to ${order?.key || 'the work item'} at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
       } catch (e) { setSaved('Not saved: ' + e.message); }
       finally {
@@ -465,7 +481,7 @@ export default function LightTable() {
       const c = sel && allClouds.find((x) => x.id === sel);
       if (!c) return;
       const d = decisions[sel] || {};
-      if (/^[1-9]$/.test(e.key) && c.kind !== 'titleBlock' && order.notes.some((n) => n.n === +e.key) && !(d.status === 'declared' && d.note === +e.key)) decide(sel, { status: 'declared', note: +e.key, signedBy: null, signedAt: null, valueOk: null });
+      if (/^[1-9]$/.test(e.key) && c.kind !== 'titleBlock' && !c.carried && order.notes.some((n) => n.n === +e.key) && !(d.status === 'declared' && d.note === +e.key)) decide(sel, { status: 'declared', note: +e.key, signedBy: null, signedAt: null, valueOk: null });
       if (e.key.toLowerCase() === 's' && (d.status === 'accepted' || (d.status === 'declared' && order.notes.some((n) => n.n === d.note))) && !d.signedBy) {
         if (!(d.status === 'declared' && !valueOkFor(d, order.notes.find((n) => n.n === d.note)) && slipOf(c, order.notes.find((n) => n.n === d.note)?.text))) signOff(sel);
       }

@@ -1,7 +1,7 @@
 // Unit tests for the release verdict and change-note parsing. Run with: npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor, drawingPdfs } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor, drawingPdfs, pairOf } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 const pdf = (id, created) => ({ id: String(id), mimeType: 'application/pdf', created });
@@ -442,4 +442,20 @@ test('a change sent back on C to D still holds when revision E arrives, until so
   assert.equal(gateOf(carried, { 'k-s1-c2': { status: 'accepted', signedBy: 'Asha' } }).blocked, false);
   // nothing is carried into a pair that does not continue the previous one
   assert.deepEqual(carriedChanges(previous, { id: 9 }), []);
+});
+
+test('two revisions attached at once are compared from the last reviewed one, so none is skipped', () => {
+  const p = (id) => ({ id });
+  assert.deepEqual(pairOf([p(1), p(2), p(3), p(4)], { revA: { id: 1 }, revB: { id: 2 } }).map((x) => x.id), [2, 4]);
+  assert.deepEqual(pairOf([p(1), p(2), p(3), p(4)], { revA: { id: 2 }, revB: { id: 4 } }).map((x) => x.id), [2, 4]);
+  assert.deepEqual(pairOf([p(1), p(2), p(3)], null).map((x) => x.id), [2, 3]);
+});
+
+test('a markup holds only while its photo is attached', () => {
+  const pdf = (id, filename) => ({ id, filename, mimeType: 'application/pdf', created: `2026-11-02T0${id}:00:00Z` });
+  const review = { revA: { id: 1 }, revB: { id: 2 }, print: { id: 11 }, clouds: [], decisions: { __ack: { status: 'ack', signedBy: 'Asha' } },
+    marks: [{ id: 'p10-m1' }, { id: 'p11-m1' }], markDecisions: { 'p11-m1': { status: 'dismissed' } } };
+  const photo = (id) => ({ id, mimeType: 'image/jpeg', created: `2026-11-02T0${id - 5}:00:00Z` });
+  assert.equal(verdictOf([pdf(1, 'X_rev-A.pdf'), pdf(2, 'X_rev-B.pdf'), photo(10), photo(11)], review).blocked, true);
+  assert.equal(verdictOf([pdf(1, 'X_rev-A.pdf'), pdf(2, 'X_rev-B.pdf'), photo(11)], review).blocked, false);
 });

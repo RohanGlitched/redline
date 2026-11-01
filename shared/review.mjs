@@ -83,7 +83,7 @@ export function carriedChanges(previous, revA) {
   if (!previous || +previous.revB?.id !== +revA?.id) return [];
   const open = (c) => { const d = previous.decisions?.[c.id] || {}; return d.status === 'rejected' || !(d.status === 'declared' || d.status === 'accepted'); };
   return (previous.clouds || []).filter((c) => !c.carried || open(c)).filter(open).map((c, i) => ({
-    ...c, id: `k-${c.id.replace(/^k-/, '')}`, n: `K${i + 1}`,
+    ...c, id: `k-${c.id.replace(/^k-/, '')}`, n: `K${i + 1}`, x0: c.box?.[0] ?? c.x0, y0: c.box?.[1] ?? c.y0, x1: c.box?.[2] ?? c.x1, y1: c.box?.[3] ?? c.y1,
     carried: { from: previous.revA?.filename, to: previous.revB?.filename, was: previous.decisions?.[c.id]?.status === 'rejected' ? 'sent back' : 'not answered' },
   }));
 }

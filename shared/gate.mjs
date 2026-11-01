@@ -127,6 +127,17 @@ export function drawingPdfs(attachments) {
   return withRevs[0] ? { pdfs: withRevs[0], named: true } : { pdfs, named: false };
 }
 
+// The two revisions to compare: from the last reviewed revision to the newest (two revisions attached at once are
+// never skipped: D to F, not E to F), or the reviewed pair itself while nothing newer has arrived.
+export function pairOf(pdfs, review) {
+  const last = pdfs[pdfs.length - 1];
+  if (!last) return [];
+  const from = review && pdfs.find((p) => +p.id === +review.revB?.id);
+  if (from && +from.id !== +last.id) return [from, last];
+  if (review && +review.revB?.id === +last.id) { const a = pdfs.find((p) => +p.id === +review.revA?.id); if (a) return [a, last]; }
+  return pdfs.slice(-2);
+}
+
 export function verdictOf(attachments, review, notes = null) {
   const { pdfs, conflict } = drawingPdfs(attachments);
   if (conflict) return { blocked: true, text: `${conflict} different drawings are attached with revisions; Redline compares one drawing per change order, so raise one change order per drawing` };
@@ -140,8 +151,8 @@ export function verdictOf(attachments, review, notes = null) {
   const unplaced = reviewedB ? (attachments || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''))
     && !pdfs.some((p) => +p.id === +a.id) && (Date.parse(a.created) > Date.parse(reviewedB.created) || +a.id > +reviewedB.id)
     && !review.decisions?.[`pdf${a.id}`]?.signedBy) : [];
-  if (unplaced.length) return { blocked: true, text: `${unplaced.map((a) => a.filename).join(', ')} was attached after the reviewed revision and is not compared; a new revision should be named like the others so Redline compares it; anything else, set it aside on the light table` };
-  const [a, b] = pdfs.slice(-2);
+  if (unplaced.length) return { blocked: true, text: `${unplaced.map((a) => a.filename).join(', ')} ${unplaced.length === 1 ? 'was' : 'were'} attached after the reviewed revision and is not compared; a new revision should be named like the others so Redline compares it; anything else, set it aside on the light table` };
+  const [a, b] = pairOf(pdfs, review);
   if (+review.revB?.id !== +b.id) return { blocked: true, text: 'a newer drawing revision was attached after the last review' };
   if (review.revA?.id && +review.revA.id !== +a.id) return { blocked: true, text: 'the review compared a different pair of revisions' };
   // the newest photo on the work item must be the print the review read (or set aside as not a print)
@@ -150,5 +161,7 @@ export function verdictOf(attachments, review, notes = null) {
   if (photos.length && +review.print?.id !== +photos[photos.length - 1].id) {
     return { blocked: true, text: 'the newest photo of a marked-up print has not been read on the light table' };
   }
-  return gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {}, review.sheets, notes, { setAside: (review.setAside || []).length, notesDone: review.notesDone });
+  const attached = new Set((attachments || []).map((x) => String(x.id)));
+  const marks = (review.marks || []).filter((m) => attached.has(/^p(\d+)-/.exec(m.id)?.[1] || String(review.print?.id)));
+  return gateOf(review.clouds || [], review.decisions || {}, marks, review.markDecisions || {}, review.sheets, notes, { setAside: (review.setAside || []).length, notesDone: review.notesDone });
 }
