@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs, pairOf } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs, pairOf, revLabel } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 import { ENGINE_VERSION, matchChanges, sameReview, settleSignatures, carriedChanges, notesDoneBefore } from '../shared/review.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
@@ -336,7 +336,7 @@ function describe(o) {
   if (o.attachments.length < 2) return o.review
     ? { key: o.key, state: 'blocked', gate: o.verdict?.text, message: 'A reviewed drawing revision was removed from the work item, so release is blocked.' }
     : { key: o.key, state: 'no-revisions', message: 'Fewer than two PDF revisions are attached.' };
-  if (!r) return { key: o.key, state: 'not-compared', message: `Revisions ${o.attachments.at(-2).filename} and ${latest.filename} have not been compared in Redline yet.` };
+  if (!r) return { key: o.key, state: 'not-compared', message: `Revisions ${(o.attachments.find((a) => +a.id === +o.pair?.[0]) || o.attachments.at(-2)).filename} and ${latest.filename} have not been compared in Redline yet.` };
   const stale = r.revB?.id !== latest.id;
   return {
     key: o.key,
@@ -354,7 +354,7 @@ function describe(o) {
         change: c.n, zone: c.zone, kind: c.kind,
         drawingTextBefore: c.before || undefined, drawingTextAfter: c.after || undefined,
         whatChanged: meaningOf(c.before, c.after).map((m) => m.text).join('; ') || undefined,
-        status: c.carried ? (d.status === 'accepted' ? `left open on ${c.carried.from} to ${c.carried.to}, fixed in this revision${d.signedBy ? `, signed by ${d.signedBy}` : ', not signed yet'}` : d.status === 'rejected' ? `left open on ${c.carried.from} to ${c.carried.to}, sent back again` : `left open on ${c.carried.from} to ${c.carried.to} (${c.carried.was}), not confirmed fixed`)
+        status: c.carried ? (d.status === 'accepted' ? `left open on ${revLabel(c.carried.from)} to ${revLabel(c.carried.to)}, fixed in this revision${d.signedBy ? `, signed by ${d.signedBy}` : ', not signed yet'}` : d.status === 'rejected' ? `left open on ${revLabel(c.carried.from)} to ${revLabel(c.carried.to)}, sent back again` : `left open on ${revLabel(c.carried.from)} to ${revLabel(c.carried.to)} (${c.carried.was}), not confirmed fixed`)
           : d.status === 'declared' ? (note ? `declared in note ${d.note}` : `declared in note ${d.note}, which is no longer in the description`) : d.status === 'accepted' ? 'accepted as a drawing correction' : d.status === 'rejected' ? 'sent back to the drafter' : 'not in the change notes',
         valueCheck: slip.length ? (d.valueOk ? `drawing value ${slip.join(', ')} differs from the note; confirmed as right by ${d.valueOk.by}` : `drawing value ${slip.join(', ')} is not what note ${d.note} says`)
           : promised.length ? (d.valueOk ? `note ${d.note} says ${promised.join(', ')}, which the drawing does not show; confirmed as right by ${d.valueOk.by}` : `note ${d.note} says ${promised.join(', ')}, which the drawing does not show`) : undefined,

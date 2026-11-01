@@ -478,3 +478,11 @@ test('revisions go in revision order, whatever order they were attached in', () 
   assert.ok(revisionRank('X rev 3.pdf') < revisionRank('X rev A.pdf'));
   assert.ok(revisionRank('X_rev-Z.pdf') < revisionRank('X_rev-AA.pdf'));
 });
+
+test('one reading of revision names everywhere: lowercase after a separator, a digit after the letter, words after', () => {
+  assert.equal(revisionOfName('BRKT-0142_rev-d.pdf'), 'D');
+  assert.equal(revisionOfName('BRKT0142 RevD1.pdf'), 'D');
+  assert.equal(revisionOfName('BRKT-0142 Rev E (released).pdf'), 'E');
+  assert.equal(drawingOf('BRKT0142 RevD1.pdf'), 'brkt0142');
+  assert.equal(revisionOfName('plate_revs.pdf'), null);
+});

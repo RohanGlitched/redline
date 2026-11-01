@@ -103,11 +103,25 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
 // The release verdict for one work item, from its PDF attachments and the review in app storage. The
 // workflow validator, the dashboard gadget and the Rovo actions all use this, never the issue property.
 // "BRKT-0142_rev-D.pdf" -> "brkt-0142": the drawing a revision belongs to (null when the name has no revision)
+// One reading of revision names for every part of Redline (the gate, the light table, the title-block check):
+// "rev" (any case, "revision" too) then a capital letter or two or a number, or a separator then any letter or two
+// ("rev-d"); an optional digit after the letter ("RevD1"); then optional words after a separator ("(released)",
+// "-signed"). Never part of a word: "review", "revs", "preview" and "drawing_rev.pdf" are not revisions.
+const REV = /(^|[^A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?(?:[-_ .]+([A-Za-z]{1,2}|\d{1,3})|([A-Z]{1,2}|\d{1,3}))(\d{0,2})((?:[-_ ]+\(?[A-Za-z0-9]+\)?)*)$/;
+export function parseRevision(filename) {
+  const base = String(filename || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+  const m = REV.exec(base);
+  if (!m) return null;
+  const t = m[2] ?? m[3];
+  const drawing = base.slice(0, m.index + m[1].length).toLowerCase().replace(/[-_ .]+$/, '');
+  return { rev: /^\d+$/.test(t) ? String(+t) : t.toUpperCase(), sub: m[4] ? +m[4] : 0, drawing: drawing || null };
+}
+
+// "BRKT-0142_rev-D.pdf" -> "rev D" (the file name itself when it names no revision)
+export const revLabel = (filename) => { const p = parseRevision(filename); return p ? `rev ${p.rev}` : String(filename || ''); };
+
 export function drawingOf(filename) {
-  const base = String(filename || '').replace(/\.[a-z0-9]+$/i, '');
-  // (the same strict reading as revision names: "review" or "revs" are not a revision)
-  const m = /^(.*?)[-_ .]*(?<![A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*(?:[A-Za-z]{1,2}\d{0,2}|\d{1,3})(?:[-_ ]+\(?[A-Za-z0-9]+\)?)*$/.exec(base);
-  return m && m[1] ? m[1].toLowerCase().replace(/[-_ .]+$/, '') : null;
+  return parseRevision(filename)?.drawing || null;
 }
 
 // The drawing revisions Redline compares on a work item, oldest first. When PDFs are named as revisions of one
@@ -117,12 +131,10 @@ export function drawingOf(filename) {
 // The revision a file name gives, as something to sort by: letters A..Z, AA.. in order, numbers by value, numbers before
 // letters; null when the name has none.
 export function revisionRank(filename) {
-  const base = String(filename || '').replace(/\.[a-z0-9]+$/i, '');
-  const m = /(?<![A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*([A-Za-z]{1,2}|\d{1,3})(\d{0,2})(?:[-_ ]+\(?[A-Za-z0-9]+\)?)*$/.exec(base);
-  if (!m) return null;
-  const t = m[1].toUpperCase(), sub = m[2] ? +m[2] : 0;
-  if (/^\d+$/.test(t)) return +t * 100 + sub;
-  return 100000 + [...t].reduce((v, ch) => v * 27 + (ch.charCodeAt(0) - 64), 0) * 100 + sub;
+  const p = parseRevision(filename);
+  if (!p) return null;
+  if (/^\d+$/.test(p.rev)) return +p.rev * 100 + p.sub;
+  return 100000 + [...p.rev].reduce((v, ch) => v * 27 + (ch.charCodeAt(0) - 64), 0) * 100 + p.sub;
 }
 
 export function drawingPdfs(attachments) {

@@ -1,14 +1,12 @@
+import { parseRevision } from '../../../../shared/gate.mjs';
 // The title block's revision letter. A drafter who changes a drawing but forgets to change "Rev C" to
 // "Rev D" in the title block releases a sheet that names the wrong revision: the shop floor cannot tell
 // which print is current. Pure functions, tested in test/gate.test.mjs.
 
 // The revision a file name says it is: "BRKT-0142_rev-D.pdf" -> "D".
 export function revisionOfName(filename = '') {
-  // "rev" (any case) then a separator or nothing, then a capital letter or two, or a number, standing on its
-  // own: never the rest of a word ("review", "revs") and never the file extension ("drawing_rev.pdf")
-  const name = String(filename).replace(/\.[a-z0-9]{2,4}$/i, '');
-  const m = name.match(/(?:^|[^A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?[-_ .]*([A-Z]{1,2}|\d{1,3})(?![A-Za-z0-9])/);
-  return m ? normalRev(m[1]) : null;
+  // the same reading as the release gate (shared/gate.mjs parseRevision)
+  return parseRevision(filename)?.rev ?? null;
 }
 
 // "03" and "3" are the same revision

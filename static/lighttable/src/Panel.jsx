@@ -1,7 +1,7 @@
 // The issue panel: the release gate in one sentence, the changes by zone, and the way into the light table.
 import { useEffect, useState } from 'react';
 import { invoke, openLightTable } from './bridge.js';
-import { gateOf, valueSlip, noteSlip, slipOf, valueOkFor, noteKey } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip, noteSlip, slipOf, valueOkFor, noteKey, revLabel } from '../../../shared/gate.mjs';
 import { cloudPath } from './cloud.js';
 
 export default function Panel() {
@@ -105,7 +105,7 @@ export default function Panel() {
                   ? [<li key={`h${sh}`} className="sheet-head">Sheet {sh}</li>] : [];
                 const slip = d.status === 'declared' && !valueOkFor(d, o.notes?.find((n) => n.n === d.note)) && slipOf(c, o.notes?.find((n) => n.n === d.note)?.text);
                 const st = slip ? 'undeclared' : cloudStatus(d);
-                const label = c.carried ? (d.status === 'accepted' ? `Fixed (left open on ${c.carried.to})` : d.status === 'rejected' ? 'Sent back again' : `Left open on ${c.carried.to}`) : d.status === 'rejected' ? 'Sent back' : slip ? valueLabel(c, d, o.notes?.find((n) => n.n === d.note)) : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
+                const label = c.carried ? (d.status === 'accepted' ? `Fixed (left open on ${revLabel(c.carried.to)})` : d.status === 'rejected' ? 'Sent back again' : `Left open on ${revLabel(c.carried.to)}`) : d.status === 'rejected' ? 'Sent back' : slip ? valueLabel(c, d, o.notes?.find((n) => n.n === d.note)) : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
                 return [...head, (
                   <li key={c.id} className={st}>
                     <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Change ${c.n}, zone ${c.zone}: ${label}${d.signedBy ? `, signed off by ${d.signedBy}` : ''}. Open it in the light table`}>

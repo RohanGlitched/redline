@@ -7,7 +7,7 @@ import { revisionOfName } from './engine/titleblock.mjs';
 import { meaningOf } from './engine/meaning.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
-import { gateOf, valueSlip, noteSlip, slipOf, noteKey, valueOkFor } from '../../../shared/gate.mjs';
+import { gateOf, valueSlip, noteSlip, slipOf, noteKey, valueOkFor, revLabel } from '../../../shared/gate.mjs';
 
 const MODES = [
   { key: 'overlay', label: 'Overlay', hint: 'Shared lines in graphite, removed in red, added in blue' },
@@ -980,7 +980,7 @@ function Carried({ list, decisions, onDecide, onSign, onSelect, readOnly }) {
           const d = decisions[c.id] || {};
           return (
             <li key={c.id}>
-              <span><button className="link" onClick={() => onSelect(c)} aria-label={`Show ${c.n} on the sheet`}><b>{c.n}</b> Zone {c.zone}</button>: {c.carried.was} on {c.carried.from} to {c.carried.to}{c.after ? ` ("${c.after}")` : ''}</span>
+              <span><button className="link" onClick={() => onSelect(c)} aria-label={`Show ${c.n} on the sheet`}><b>{c.n}</b> Zone {c.zone}</button>: {c.carried.was} on {revLabel(c.carried.from)} to {revLabel(c.carried.to)}{c.after ? ` ("${c.after}")` : ''}</span>
               {d.status === 'accepted' ? (d.signedBy ? <em> fixed in this revision, signed by {d.signedBy}</em>
                 : !readOnly && <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>)
                 : d.status === 'rejected' ? <em> sent back again</em>
@@ -1129,7 +1129,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
         ) : d.status === 'declared' || d.status === 'accepted' ? (
           <>
             <p className="st">{d.status === 'declared' ? (notes.some((n) => n.n === d.note) ? <>Declared in note {d.note}</> : <>Declared in note {d.note}, which is no longer in the change notes. Declare it again.</>) : c.kind === 'titleBlock' ? <>Released with the title block as it is</> : <>Accepted as a drawing correction</>}
-              {' '}<button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null, signedBy: null, signedAt: null, valueOk: null })}>Change</button></p>
+              {' '}<button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null, signedBy: null, signedAt: null, valueOk: null })}>Change the answer</button></p>
             {d.status === 'declared' && <ValueCheck c={c} d={d} note={notes.find((n) => n.n === d.note)} onDecide={onDecide} />}
             {d.signedBy && d.status === 'declared' && d.noteText != null && notes.some((n) => n.n === d.note) && noteKey(notes.find((n) => n.n === d.note).text) !== d.noteText
               ? <><p className="rl-warn">Note {d.note} was edited after {d.signedBy} signed it off.</p><button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off again</button></>
