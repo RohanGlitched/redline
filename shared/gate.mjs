@@ -53,10 +53,13 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
   const markups = marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)).length;
   // every sheet of a multi-sheet drawing has to be compared before release
   const unseen = sheets && sheets.count > 1 ? sheets.count - new Set(sheets.done || []).size : 0;
+  // every numbered note is carried out on the drawing, or a named person says it needs no drawing change
+  const unmet = notes && clouds.length && (!sheets || sheets.count <= 1 || new Set(sheets.done || []).size >= sheets.count)
+    ? notes.filter((nt) => !clouds.some((c) => decisions[c.id]?.status === 'declared' && decisions[c.id]?.note === nt.n) && !decisions[`note${nt.n}`]?.signedBy).length : 0;
   const needsAck = (!clouds.length && !marks.length) || (extra.setAside || 0) > 0;
   const ack = decisions.__ack;
   const unconfirmed = needsAck && (!ack?.signedBy || (ack.asideCount != null && (extra.setAside || 0) > ack.asideCount)) ? 1 : 0;
-  const blocked = open + unsigned + rejected + mismatched + markups + unseen + noteChanged + unconfirmed > 0;
+  const blocked = open + unsigned + rejected + mismatched + markups + unseen + noteChanged + unconfirmed + unmet > 0;
   // every reason the release is held, most serious first, so the verdict never hides a second problem
   const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   const parts = [
@@ -68,6 +71,7 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     noteChanged && `${n(noteChanged, 'change note was', 'change notes were')} edited after the sign-off`,
     unsigned && `${n(unsigned, 'declared change needs', 'declared changes need')} a sign-off`,
     unconfirmed && (!clouds.length && !marks.length ? 'nobody has confirmed that the revisions show no differences' : 'nobody has confirmed what Redline set aside as re-plot shifts'),
+    unmet && `${n(unmet, 'change note has', 'change notes have')} no change on the drawing`,
   ].filter(Boolean);
   const text = parts.length ? parts.join('; ')
     : !clouds.length && !marks.length ? 'No differences found between the revisions'
@@ -82,8 +86,9 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     noteChanged && { kind: 'noteChanged', n: noteChanged, short: `${noteChanged} ${noteChanged === 1 ? 'note' : 'notes'} edited since signed` },
     unsigned && { kind: 'unsigned', n: unsigned, short: `${unsigned} to sign off` },
     unconfirmed && { kind: 'ack', n: 1, short: !clouds.length && !marks.length ? 'confirm no differences' : 'confirm what was set aside' },
+    unmet && { kind: 'unmet', n: unmet, short: `${unmet} ${unmet === 1 ? 'note' : 'notes'} not on the drawing` },
   ].filter(Boolean);
-  return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, noteChanged, unconfirmed, text, parts, reasons };
+  return { blocked, status: blocked ? 'blocked' : 'clear', open, unsigned, rejected, mismatched, markups, unseen, noteChanged, unconfirmed, unmet, text, parts, reasons };
 }
 
 // The release verdict for one work item, from its PDF attachments and the review in app storage. The

@@ -704,7 +704,10 @@ function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClo
                   {here.map((c) => <button key={c.id} className="delta" onClick={() => onSelect(c)} aria-label={`Show change ${c.n}`}>{c.n}</button>)}
                   {elsewhere.map((x) => <button key={x} className="rl-goto" onClick={() => onSheet(x)}>On sheet {x}</button>)}
                   {away && <button className="rl-goto" onClick={() => onSheet(named)}>{sheets.compared[named] ? `Nothing found on sheet ${named}` : `On sheet ${named}, not compared yet`}</button>}
-                  {!linked.length && !away && <em>{sheets.count > 1 ? 'No change found on this sheet' : 'No change on the sheet'}</em>}
+                  {!linked.length && !away && (decisions[`note${n.n}`]?.signedBy
+                    ? <em>No drawing change needed, said {decisions[`note${n.n}`].signedBy}{order.canEdit !== false && <> <button className="link" onClick={() => onDecide(`note${n.n}`, { status: null, signedBy: null, signedAt: null })}>Undo</button></>}</em>
+                    : <><em>{sheets.count > 1 ? 'No change found on this sheet' : 'No change on the sheet'}</em>
+                      {order.canEdit !== false && <button className="rl-goto" onClick={() => { onDecide(`note${n.n}`, { status: 'nochange' }); onSign(`note${n.n}`); }}>Needs no drawing change: sign</button>}</>)}
                 </span>
               </li>
             );

@@ -333,3 +333,13 @@ test('the drawing revisions are the PDFs named as revisions of one drawing; form
   // no revision names at all: every PDF counts, as before
   assert.deepEqual(drawingPdfs([pdf(1, 'a.pdf'), pdf(2, 'b.pdf')]).pdfs.map((a) => a.id), [1, 2]);
 });
+
+test('a change note nothing on the drawing carries out holds the release until someone says it needs no drawing change', () => {
+  const notes = [{ n: 1, text: 'Zone D2: bore Ø25 becomes Ø25.5' }, { n: 2, text: 'Zone A7: add a note' }];
+  const c = [{ id: 'c1' }];
+  const d = { c1: { status: 'declared', note: 1, signedBy: 'Asha' } };
+  const g = gateOf(c, d, [], {}, null, notes);
+  assert.equal(g.unmet, 1);
+  assert.equal(g.blocked, true);
+  assert.equal(gateOf(c, { ...d, note2: { status: 'nochange', signedBy: 'Asha' } }, [], {}, null, notes).blocked, false);
+});
