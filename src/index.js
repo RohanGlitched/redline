@@ -361,7 +361,7 @@ async function reviewedChangeOrders(projectKey) {
     for (const i of issues) {
       const review = stored.get(String(i.id));
       const v = verdictOf(i.fields.attachment, review, notesFromAdf(i.fields.description));
-      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text, since: review?.heldSince || review?.savedAt, updated: i.fields.updated });
+      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text, reasons: (v.reasons || []).map((r) => ({ kind: r.kind, short: r.short })), since: review?.heldSince || review?.savedAt, updated: i.fields.updated });
     }
   }
   items.sort((x, y) => Date.parse(y.updated || 0) - Date.parse(x.updated || 0));

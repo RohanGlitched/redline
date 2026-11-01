@@ -38,7 +38,9 @@ export default function Gadget() {
                 <span className="key">{c.key}</span>
                 {c.since && <span className="age">{held(c.since)}</span>}
                 <span className="sum">{c.summary}</span>
-                <span className="why"><span className="dot" aria-hidden="true" />{c.gate ? c.gate[0].toUpperCase() + c.gate.slice(1) : 'Release blocked'}</span>
+                {c.reasons?.length
+                  ? <span className="why pills" title={c.gate}>{c.reasons.map((r) => <span key={r.kind} className={`rl-reason ${r.kind}`}>{r.short}</span>)}</span>
+                  : <span className="why"><span className="dot" aria-hidden="true" />{c.gate ? c.gate[0].toUpperCase() + c.gate.slice(1) : 'Release blocked'}</span>}
               </button>
             </li>
           ))}

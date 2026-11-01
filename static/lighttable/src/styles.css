@@ -347,3 +347,6 @@ button { font: inherit; color: inherit; }
 .rl-panel-gate > .dot { align-self: start; margin-top: 6px; } /* sits on the "Release blocked" line, not beside the list */
 .rl-cloud > path, .rl-mark > ellipse { pointer-events: all; } /* the inside of a cloud or pen ring selects it too, not just its outline */
 .rl-cloud, .rl-mark { cursor: pointer; }
+
+/* gadget: the reasons as the light table's pills */
+.why.pills { display: flex; flex-wrap: wrap; gap: 4px; color: var(--rl-danger-text, #ae2e24); }
