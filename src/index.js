@@ -106,7 +106,7 @@ resolver.define('saveReview', async (req) => {
     else if (before?.signedById && d.signedAt === before.signedAt) d.signedById = before.signedById;
     if (!d.signedAt) { delete d.signedById; delete d.signedBy; }
   }
-  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {});
+  const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets);
   const review = { ...r, gate, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
   await kvs.set(reviewKey(issue.id), review);
   // searchable copy for JQL; the validator never reads it
@@ -185,7 +185,7 @@ export async function releaseGate(event) {
   if (!review) return { result: false, errorMessage: 'Redline: compare the two latest drawing revisions on the light table before release.' };
   const latest = Math.max(...pdfs.map((a) => +a.id));
   if (+review.revB?.id !== latest) return { result: false, errorMessage: 'Redline: a newer drawing revision was attached after the last review. Review it on the light table before release.' };
-  const gate = gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {});
+  const gate = gateOf(review.clouds || [], review.decisions || {}, review.marks || [], review.markDecisions || {}, review.sheets);
   return gate.blocked ? { result: false, errorMessage: `Redline: ${gate.text}. Resolve them on the light table before release.` } : { result: true };
 }
 

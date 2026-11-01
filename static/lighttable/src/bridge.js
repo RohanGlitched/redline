@@ -21,10 +21,23 @@ const SAMPLE = {
   user: { accountId: 'dev', displayName: 'Priya Nair' },
 };
 
+// ?sample=multi swaps in a three-sheet drawing set with a change on sheet 2
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('sample') === 'multi') {
+  SAMPLE.attachments = [
+    { id: 'ma', filename: 'HSG-0207_rev-A.pdf', created: '2026-10-20T09:00:00Z', url: './samples/HSG-0207_rev-A.pdf' },
+    { id: 'mb', filename: 'HSG-0207_rev-B.pdf', created: '2026-11-01T09:00:00Z', url: './samples/HSG-0207_rev-B.pdf' },
+  ];
+  SAMPLE.images = [];
+  SAMPLE.key = 'ENG-4';
+  SAMPLE.summary = 'ECO-0207: Gearbox housing, rev A to rev B (3 sheets)';
+  SAMPLE.notes = [{ n: 1, text: 'Sheet 2, zone A7: add note 7 "Apply thread locker to all M6 screws".' }];
+}
+const REVIEW_KEY = `redline-review-${SAMPLE.key}`;
+
 async function devInvoke(fn, payload = {}) {
   await new Promise((r) => setTimeout(r, 120));
   if (fn === 'getChangeOrder') {
-    const review = JSON.parse(localStorage.getItem('redline-review') || 'null');
+    const review = JSON.parse(localStorage.getItem(REVIEW_KEY) || 'null');
     return { ...SAMPLE, review };
   }
   if (fn === 'getAttachment') {
@@ -34,7 +47,7 @@ async function devInvoke(fn, payload = {}) {
     return { size: buf.length, data: btoa(s) };
   }
   if (fn === 'raiseMarkup') return { key: 'ENG-' + (10 + Math.floor(Math.random() * 80)) };
-  if (fn === 'saveReview') { localStorage.setItem('redline-review', JSON.stringify(payload.review)); return { ok: true }; }
+  if (fn === 'saveReview') { localStorage.setItem(REVIEW_KEY, JSON.stringify(payload.review)); return { ok: true }; }
   throw new Error('no dev handler for ' + fn);
 }
 

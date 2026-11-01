@@ -2,7 +2,7 @@
 // tied to a change-note line or held as undeclared, and the release gate that follows from it.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, closeModal } from './bridge.js';
-import { analyse, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
+import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
 import { gateOf } from '../../../shared/gate.mjs';
 
@@ -43,7 +43,30 @@ export default function LightTable() {
   const stageRef = useRef(null), camRef = useRef(cam), versionRef = useRef(0);
   camRef.current = cam;
 
-  // Load the change order and both revisions, then run the engine once.
+  // Load the change order and both revisions, then compare sheet 1 (other sheets on demand).
+  const [sheet, setSheet] = useState(1);
+  const [sheets, setSheets] = useState({ count: 1, compared: {} }); // compared: { [sheet]: clouds }
+  const [turning, setTurning] = useState(null); // sheet being compared while the current one stays on the table
+  const analysed = useRef({});
+  const loadSheet = useCallback(async (o, n, revA, revB, keep = false) => {
+    if (keep) setTurning(n); else setRes(null);
+    let r;
+    try { r = analysed.current[n] || (analysed.current[n] = await analyse(invoke, revA, revB, o.notes, setStage, n)); }
+    finally { setTurning(null); }
+    setPhase('dark'); setSel(null); setPrint(null);
+    // cloud ids carry the sheet so decisions on different sheets never collide
+    const clouds = r.clouds.map((c) => ({ ...c, id: `s${n}-${c.id}`, sheet: n }));
+    const prior = o.review && o.review.revB?.id === revB.id ? o.review.decisions || {} : {};
+    setDecisions((d) => {
+      const next = { ...prior, ...d };
+      for (const c of clouds) next[c.id] = next[c.id] || (c.note ? { status: 'declared', note: c.note } : { status: 'open' });
+      return next;
+    });
+    const count = Math.min(r.pages[0], r.pages[1]);
+    setSheets((x) => ({ count, compared: { ...x.compared, [n]: clouds } }));
+    setRes({ ...r, clouds, revA, revB, sheet: n });
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
@@ -52,17 +75,23 @@ export default function LightTable() {
         const pdfs = o.attachments;
         if (pdfs.length < 2) { setError('Attach two PDF revisions of the drawing to this work item, oldest first.'); return; }
         const [revA, revB] = pdfs.slice(-2);
-        const r = await analyse(invoke, revA, revB, o.notes, setStage);
-        setRes({ ...r, revA, revB });
-        const prior = o.review && o.review.revB?.id === revB.id ? o.review.decisions || {} : {};
-        const init = {};
-        for (const c of r.clouds) init[c.id] = prior[c.id] || (c.note ? { status: 'declared', note: c.note } : { status: 'open' });
-        setDecisions(init);
-        if (o.review?.markDecisions && o.review.revB?.id === revB.id) setMarkDecisions(o.review.markDecisions);
+        if (o.review?.revB?.id === revB.id) {
+          // sheets compared in an earlier session count as compared, with their saved changes
+          const bySheet = {};
+          for (const c of o.review.clouds || []) (bySheet[c.sheet || 1] ||= []).push(c);
+          setSheets({ count: o.review.sheets?.count || 1, compared: Object.fromEntries((o.review.sheets?.done || []).map((n) => [n, bySheet[n] || []])) });
+          if (o.review.markDecisions) setMarkDecisions(o.review.markDecisions);
+        }
         versionRef.current = o.review?.version || 0;
+        await loadSheet(o, 1, revA, revB);
       } catch (e) { setError(e.message || String(e)); }
     })();
   }, []);
+
+  const goSheet = async (n) => {
+    if (n === sheet || !res || turning) return;
+    try { await loadSheet(order, n, res.revA, res.revB, true); setSheet(n); } catch (e) { setError(e.message || String(e)); }
+  };
 
   const overlayCanvas = useCanvasImage(useMemo(() => res && composite(res.hiA, res.hiBw), [res]));
   const aCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiA, [43, 47, 54]), [res]));
@@ -122,7 +151,8 @@ export default function LightTable() {
   }, [res]);
 
   useEffect(() => {
-    if (phase === 'ready' && !print && order?.images?.length) readPhoto(order.images[order.images.length - 1]);
+    // a photographed print is of the first sheet unless someone says otherwise
+    if (phase === 'ready' && !print && res?.sheet === 1 && order?.images?.length) readPhoto(order.images[order.images.length - 1]);
   }, [phase]);
 
   async function addPhoto(file) {
@@ -147,7 +177,9 @@ export default function LightTable() {
   }
 
   // Autosave the review onto the work item (an issue property the release validator reads).
-  const gate = useMemo(() => gateOf(res?.clouds || [], decisions, marks, markDecisions), [res, decisions, marks, markDecisions]);
+  const allClouds = useMemo(() => Object.values(sheets.compared).flat(), [sheets]);
+  const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
+  const gate = useMemo(() => gateOf(allClouds, decisions, marks, markDecisions, sheetInfo), [allClouds, decisions, marks, markDecisions, sheets]);
   useEffect(() => {
     if (!res || !Object.keys(decisions).length) return;
     const t = setTimeout(async () => {
@@ -156,7 +188,8 @@ export default function LightTable() {
         const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
-          clouds: res.clouds.map(({ id, n, zone, kind, x0, y0, x1, y1 }) => ({ id, n, zone, kind, box: [x0, y0, x1, y1] })),
+          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1] })),
+          sheets: sheetInfo,
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
           print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename } : null,
           marks: marks.map(({ id, n, zone, x0, y0, x1, y1 }) => ({ id, n, zone, box: [x0, y0, x1, y1] })), markDecisions,
@@ -173,7 +206,7 @@ export default function LightTable() {
       } catch (e) { setSaved('Not saved: ' + e.message); }
     }, 500);
     return () => clearTimeout(t);
-  }, [decisions, res, markDecisions, print]);
+  }, [decisions, res, markDecisions, print, sheets]);
 
   const flyTo = useCallback((c) => {
     if (!stageRef.current || !c) return;
@@ -237,10 +270,19 @@ export default function LightTable() {
             <span className="rl-legend" aria-hidden={mode !== 'overlay'} data-on={mode === 'overlay'}>
               <i className="sw g" />In both <i className="sw r" />Removed <i className="sw b" />Added
             </span>
+            {sheets.count > 1 && (
+              <span className="rl-sheets" role="tablist" aria-label="Sheets">
+                {Array.from({ length: sheets.count }, (_, i) => i + 1).map((n) => {
+                  const c = sheets.compared[n];
+                  return <button key={n} role="tab" aria-selected={n === sheet} aria-busy={n === turning} className={`${n === sheet ? 'on' : ''} ${n === turning ? 'busy' : ''} ${c ? (c.length ? 'changed' : 'same') : 'todo'}`} onClick={() => goSheet(n)} aria-label={`Sheet ${n}, ${c ? `${c.length} ${c.length === 1 ? 'change' : 'changes'}` : 'not compared yet'}`}>Sheet {n}{c ? ` (${c.length})` : ''}</button>;
+                })}
+              </span>
+            )}
             <button className="rl-fit" onClick={fit} title="Fit the sheet (F)">Fit sheet</button>
           </div>
           <div className={`rl-stage ${lit ? 'lit' : ''} phase-${phase}`} ref={stageRef}
             onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onWheel={onWheel}>
+            {turning && <div className="rl-turning" role="status"><span>Comparing sheet {turning}: {stage.toLowerCase()}…</span></div>}
             <div className="rl-sheet" style={{ width: A.w, height: A.h, transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.s})` }}>
               <Layer canvas={shown === 'overlay' ? overlayCanvas : shown === 'b' ? bCanvas : shown === 'print' ? printCanvas : aCanvas} />
               {mode === 'swipe' && (
@@ -289,6 +331,7 @@ export default function LightTable() {
           </div>
         </section>
         <Ledger res={res} order={order} decisions={decisions} sel={sel} phase={phase} gate={gate}
+          sheet={sheet} sheets={sheets} allClouds={allClouds} onSheet={goSheet}
           onSelect={select} onDecide={decide} onSign={signOff}
           print={print} marks={marks} markDecisions={markDecisions} onReadPhoto={readPhoto} onAddPhoto={addPhoto}
           onDecideMark={decideMark} onRaiseMark={raiseMark} />
@@ -406,7 +449,7 @@ function Zoom({ cam }) {
   return <div className="rl-zoom" aria-hidden="true">{Math.round(cam.s * 100)}%</div>;
 }
 
-function Ledger({ res, order, decisions, sel, phase, gate, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark }) {
+function Ledger({ res, order, decisions, sel, phase, gate, sheet, sheets, allClouds, onSheet, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark }) {
   const shown = phase === 'ready' ? res.clouds.length : phase === 'clouds' ? res.clouds.length : 0;
   return (
     <aside className="rl-ledger" aria-label="Change ledger">
@@ -414,12 +457,21 @@ function Ledger({ res, order, decisions, sel, phase, gate, onSelect, onDecide, o
         <h2>Change notes</h2>
         <ol>
           {order.notes.map((n) => {
-            const linked = res.clouds.filter((c) => decisions[c.id]?.note === n.n);
+            const linked = allClouds.filter((c) => decisions[c.id]?.note === n.n);
+            const here = linked.filter((c) => (c.sheet || 1) === sheet);
+            const elsewhere = [...new Set(linked.filter((c) => (c.sheet || 1) !== sheet).map((c) => c.sheet))];
+            const named = noteSheet(n.text);
+            const away = named && named !== sheet && named <= sheets.count && !elsewhere.includes(named);
             return (
               <li key={n.n}>
                 <span className="num">{n.n}</span>
                 <p>{n.text}</p>
-                <span className="links">{linked.length ? linked.map((c) => <button key={c.id} className="delta" onClick={() => onSelect(c)} aria-label={`Show change ${c.n}`}>{c.n}</button>) : <em>No change on the sheet</em>}</span>
+                <span className="links">
+                  {here.map((c) => <button key={c.id} className="delta" onClick={() => onSelect(c)} aria-label={`Show change ${c.n}`}>{c.n}</button>)}
+                  {elsewhere.map((x) => <button key={x} className="rl-goto" onClick={() => onSheet(x)}>On sheet {x}</button>)}
+                  {away && <button className="rl-goto" onClick={() => onSheet(named)}>{sheets.compared[named] ? `Nothing found on sheet ${named}` : `On sheet ${named}, not compared yet`}</button>}
+                  {!linked.length && !away && <em>{sheets.count > 1 ? 'No change found on this sheet' : 'No change on the sheet'}</em>}
+                </span>
               </li>
             );
           })}

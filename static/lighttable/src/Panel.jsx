@@ -54,7 +54,8 @@ export default function Panel() {
       </div>
     );
   }
-  const gate = r ? gateOf(r.clouds, r.decisions) : null;
+  // the verdict the backend recomputed when the review was saved (the same one the release gate uses)
+  const gate = r ? (r.gate ? { ...r.gate, blocked: r.gate.status === 'blocked' } : gateOf(r.clouds, r.decisions)) : null;
   return (
     <div className="rl-panel">
       <div className={`rl-panel-gate ${!gate ? 'new' : gate.blocked ? 'blocked' : 'clear'}`}>

@@ -61,10 +61,19 @@ export function grayToImage(img, tint) {
 
 // Match each cloud to a change-note line that names its zone ("Zone D3: ..."). Engineers already write
 // zones into change notes, so this is a deterministic link, not a guess.
-export function linkNotes(clouds, notes) {
+// The sheet a change note names ("Sheet 2, zone A7: ..."), or null when it does not name one.
+export function noteSheet(text) {
+  const m = /\bsheets?\s+(\d{1,3})\b/i.exec(text);
+  return m ? +m[1] : null;
+}
+
+export function linkNotes(clouds, notes, sheet = 1) {
   const zoneRe = /\bzones?\s+([A-H]\d{1,2}(?:\s*(?:,|and|&)\s*[A-H]\d{1,2})*)/gi;
   const byZone = new Map();
   for (const n of notes) {
+    // a note that names another sheet never declares a change on this one
+    const ns = noteSheet(n.text);
+    if (ns && ns !== sheet) continue;
     for (const m of n.text.matchAll(zoneRe)) for (const z of m[1].split(/\s*(?:,|and|&)\s*/i)) byZone.set(z.toUpperCase(), n.n);
   }
   // A note claims a cloud outright only when it is the single change in the zone the note names.
@@ -121,7 +130,7 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
   const clouds = r.clouds
     .sort((p, q) => p.y0 - q.y0 || p.x0 - q.x0)
     .map((c, i) => ({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed, zone: zoneOf(c, A.w, A.h) }));
-  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes), transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
+  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes, page || 1), transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
 }
 
 // ---------- paper markups ----------

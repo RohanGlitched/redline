@@ -236,3 +236,18 @@ button { font: inherit; color: inherit; }
 .rl-needs.done b { color: var(--rl-success-text); }
 .rl-row.compact .rl-row-main { padding: 6px 10px; }
 .rl-row.compact .what { flex-direction: row; gap: 8px; align-items: baseline; }
+
+.rl-sheets { display: inline-flex; gap: 2px; margin-left: 14px; padding-left: 14px; border-left: 1px solid var(--rl-border); }
+.rl-sheets button { font-family: var(--rl-letter); font-size: 12px; }
+.rl-sheets button.todo { color: var(--rl-danger-text); }
+.rl-sheets button.busy { animation: rl-busy 1s ease-in-out infinite alternate; }
+@keyframes rl-busy { from { opacity: 1; } to { opacity: .45; } }
+/* the sheet stays on the table, dimmed, while the next one is compared */
+.rl-turning { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; background: color-mix(in srgb, var(--rl-table) 62%, transparent); backdrop-filter: blur(1.5px); animation: rl-fade .2s ease-out; pointer-events: none; }
+.rl-turning span { padding: 8px 14px; border-radius: 4px; background: var(--rl-surface); border: 1px solid var(--rl-border); font-size: 13px; color: var(--rl-text); box-shadow: 0 6px 18px rgb(23 43 77 / .12); }
+@keyframes rl-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .rl-sheets button.busy, .rl-turning { animation: none; } }
+
+/* a note whose change sits on another sheet links there */
+.rl-goto { border: 0; background: none; padding: 0; font: inherit; font-size: 12px; color: var(--rl-diazo); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.rl-goto:hover { color: var(--rl-text); }
