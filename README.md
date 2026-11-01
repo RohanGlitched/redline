@@ -37,7 +37,7 @@ The ledger lists each change with before-and-after crops. Arrow keys step throug
 2. The engine registers revision B onto revision A: first moment-based alignment, then pyramid Lucas-Kanade on the line work, which also absorbs the skew and scale of a rescan.
 3. It diffs ink darkness with a small positional tolerance, so anti-aliasing and rescan blur are not counted as changes.
 4. It groups changed ink into blobs. On noisy scans it takes a second, contrast-blind look at each blob.
-5. It merges edits within about 7 mm into one cloud and names its zone from the ASME drawing border (columns from the right, rows from the bottom), so *"Zone D2"* in a change note links to the change in D2.
+5. It merges edits within about 7 mm into one cloud and names its zone on an 8 by 6 grid laid out like an ASME drawing border (columns numbered from the right, rows lettered from the bottom), so *"Zone D2"* in a change note links to the change in D2.
 
 A note claims a change outright only when that change is the only one in the zone it names. Anything less certain is shown as a suggestion that a person confirms. That way an undeclared edit can never hide behind a declared one next to it.
 
@@ -50,8 +50,8 @@ On 352 revision pairs built from public-domain NIST test drawings, with edits pl
 | | Result |
 |---|---|
 | Digital revisions | 431 of 432 visible edits found, no false clouds on unchanged sheets, about 0.4 s a sheet |
-| Rescanned revision B (rotated, scaled, blurred, noisy, JPEG) | 396 of 432 edits found (91.7%), 2.7 false clouds a sheet |
-| Phone photos of marked-up prints (60 photos, 160 pen marks) | 160 of 160 marks found, no false marks |
+| Simulated rescans of revision B (rotated, scaled, blurred, noisy, JPEG) | 396 of 432 edits found (91.7%), 2.7 false clouds a sheet |
+| Simulated phone photos of marked-up prints (60 photos, 160 pen marks) | 160 of 160 marks found, no false marks |
 
 The scripts and the method are in [`bench/`](bench/). Anyone with the NIST drawings can run them again.
 
