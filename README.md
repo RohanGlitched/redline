@@ -6,10 +6,10 @@ An engineering change order says what changed on a drawing: *"bore Ø25 becomes 
 
 Redline is a Forge app for Jira that compares the two newest PDF revisions attached to a change order and does five things:
 
-- clouds every change between them, the way a drafter marks a revision;
+- clouds each change it finds between them, the way a drafter marks a revision;
 - matches each change to the numbered change notes in the description, and checks the values: if note 1 says Ø25.5 and the drawing now says Ø25.6, the release waits;
 - holds the release transition until every change is declared and signed off;
-- reads a phone photo of a marked-up print and lists every red-pen markup on it, so comments from the shop floor need an answer too;
+- reads a phone photo of a marked-up print (the sample's photo is simulated) and lists every red-pen markup on it, so comments from the shop floor need an answer too;
 - checks the title block names the revision being released.
 
 The comparison runs in the browser inside Jira. Drawings never leave Atlassian, and the comparison calls no AI service.
@@ -70,7 +70,7 @@ The benchmark measures the pixel comparison and the markup reader; the text-laye
 
 Install Redline from the link on the Devpost page (Jira Cloud, any site). Then, in about three minutes:
 
-1. Open any work item, select the **Apps** button under its title and choose **Redline**. The panel offers **Add a sample change order**. It attaches revisions C and D of a sample bracket drawing (a public-domain NIST test drawing, edited by us), a phone photo of a marked-up print, and two numbered change notes.
+1. Open a throwaway work item (the sample attaches three files and adds a Change notes section to its description), select the **Apps** button under its title and choose **Redline**. The panel offers **Add a sample change order**. It attaches revisions C and D of a sample bracket drawing (a public-domain NIST test drawing, edited by us), a phone photo of a marked-up print, and two numbered change notes.
 2. Select **Compare revisions**. The light table finds five changes and two pen markups. Change 1 is declared in note 1, but the drawing says Ø25.6 where the note says Ø25.5. Change 2, a hole, moved 3 mm and is in no note; change 3, a datum feature removed, is in no note either. Change 4 matches note 2 and needs a sign-off. Change 5 is the title block, which still reads Rev C on the Rev D drawing. The machinist circled change 2 on the print.
 3. Decide each one: press **1** or **2** to declare a change against a note, **S** to sign off, or use the buttons. The verdict in the header updates as you go. Close the light table to see the issue panel.
 4. To see the release gate, add the **Redline drawing release gate** validator to a transition (steps in [Set up the release gate](docs/release-gate.md)) and try that transition while changes are open. Jira refuses it with the reason.
@@ -79,6 +79,9 @@ Install Redline from the link on the Devpost page (Jira Cloud, any site). Then, 
 To build and deploy it yourself:
 
 ```bash
+npm install -g @forge/cli     # once; Node 22 or later
+forge login
+forge register                # gives your copy its own app id
 npm install
 cd static/lighttable && npm install && npm run build && cd ../..
 forge deploy

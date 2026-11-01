@@ -13,4 +13,5 @@ Redline is MIT licensed (see `LICENSE`). It ships or depends on the following op
 
 - Benchmark drawings: the NIST MBE PMI test cases, a work of the US government and in the public domain. They are downloaded by the benchmark, not shipped.
 - Real-world figures in `docs/real-world/`: crops of schematics from SparkFun Electronics' open-hardware repositories, licensed CC BY-SA 4.0. The figures are cropped and annotated by us; the same licence applies to them.
-- The sample drawings in `static/lighttable/public/samples/` were made for Redline.
+- The sample drawings in `static/lighttable/public/samples/` are NIST public-domain test drawings (CTC 1 and CTC 2) edited by us; the phone photo of a marked-up print is simulated.
+- PyMuPDF (AGPL-3.0), OpenCV (Apache-2.0) and NumPy (BSD-3-Clause) are used by the scripts in `bench/` and `tools/`; they are installed by whoever runs them and are not shipped with the app.
