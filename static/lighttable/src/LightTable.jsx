@@ -228,7 +228,7 @@ export default function LightTable() {
   const marks = print?.status === 'done' ? print.result.marks : [];
   // someone who can view the work item but not edit it sees the review without the controls to change it
   const readOnly = order?.canEdit === false;
-  const decideMark = (id, patch) => { if (!readOnly) setMarkDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); };
+  const decideMark = (id, patch) => { if (!readOnly) { touchedRef.current = true; setMarkDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); } };
   async function raiseMark(m) {
     if (readOnly) return;
     decideMark(m.id, { status: 'raising' });
@@ -241,6 +241,14 @@ export default function LightTable() {
     } catch (e) { decideMark(m.id, { status: 'open', error: e.message }); }
   }
 
+  // what the reviewer has decided, without the stamps the server adds (who signed, when): compared with what
+  // was last saved, it says whether closing now would leave a decision behind
+  const snapOf = (ds, ms) => JSON.stringify([Object.entries(ds || {}).map(([id, d]) => [id, d.status ?? null, d.note ?? null, !!d.signedAt, !!d.valueOk]).sort(),
+    Object.entries(ms || {}).map(([id, m]) => [id, m.status ?? null]).sort()]);
+  const latestSnap = useRef(null), savedSnap = useRef(null), touchedRef = useRef(false);
+  latestSnap.current = snapOf(decisions, markDecisions);
+  const [closeWarned, setCloseWarned] = useState(false);
+
   // Close never drops a decision: a save still waiting runs now, and one on its way is waited for
   const closeSafely = async () => {
     // a decision made during a save starts another save when that one ends; wait for the last of them
@@ -249,6 +257,13 @@ export default function LightTable() {
       const p = savePromise.current;
       try { await p; } catch { /* the save reports its own error */ }
       if (savePromise.current === p && !pending.current && !timerRef.current) break;
+    }
+    // something decided that never reached Jira (the save failed, or could not start yet): say so once
+    const unsaved = !readOnly && (savedSnap.current === null ? touchedRef.current : latestSnap.current !== savedSnap.current);
+    if (unsaved && !closeWarned) {
+      setCloseWarned(true);
+      setSaved('Not saved: your latest decisions are not stored yet. Wait a moment, or close again to leave without them.');
+      return;
     }
     closeModal();
   };
@@ -318,6 +333,7 @@ export default function LightTable() {
           }
           return changed ? next : cur;
         });
+        savedSnap.current = snapOf(decisions, markDecisions); setCloseWarned(false);
         setSaved(`Saved to ${order?.key || 'the work item'} at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
       } catch (e) { setSaved('Not saved: ' + e.message); }
       finally {
@@ -363,6 +379,7 @@ export default function LightTable() {
   }, [phase, res]);
   const decide = (id, patch) => {
     if (readOnly) return;
+    touchedRef.current = true;
     setDecisions((d) => {
       const cur = d[id] || {};
       const moved = 'status' in patch && patch.status !== cur.status || 'note' in patch && patch.note !== cur.note;
