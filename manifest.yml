@@ -1,0 +1,96 @@
+modules:
+  jira:issuePanel:
+    - key: redline-panel
+      resource: main
+      resolver:
+        function: resolver
+      viewportSize: medium
+      title: Redline
+      icon: resource:main;redline-icon.svg
+  # Index the review so JQL (and Rovo) can find change orders whose release is blocked.
+  jira:entityProperty:
+    - key: redline-index
+      entityType: issue
+      propertyKey: redline-review
+      values:
+        - path: gate.status
+          type: string
+          searchAlias: redlineGate
+        - path: gate.open
+          type: number
+          searchAlias: redlineUndeclared
+  # Add this validator to the transition that releases a drawing. It reads the review Redline saved
+  # on the work item and refuses the transition while any change is undeclared, unsigned or sent back,
+  # or when a newer PDF revision was attached after the review.
+  jira:workflowValidator:
+    - key: redline-release-gate
+      name: Redline drawing release gate
+      description: Blocks the transition until every change between the last two PDF drawing revisions is declared in the change notes and signed off in Redline.
+      projectTypes: ['company-managed', 'team-managed']
+      expression: >-
+        issue.attachments.filter(a => a.mimeType == 'application/pdf').length < 2
+        ? true
+        : issue.properties['redline-review'] == null
+        ? 'Redline: compare the two latest drawing revisions on the light table before release.'
+        : issue.properties['redline-review'].revB.id != issue.attachments.filter(a => a.mimeType == 'application/pdf').map(a => a.id).reduce((m, x) => x > m ? x : m, 0)
+        ? 'Redline: a newer drawing revision was attached after the last review. Review it on the light table before release.'
+        : issue.properties['redline-review'].gate.status == 'clear'
+        ? true
+        : 'Redline: ' + issue.properties['redline-review'].gate.text + '. Resolve them on the light table before release.'
+  rovo:agent:
+    - key: redline-checker
+      name: Drawing change checker
+      description: Answers questions about engineering change orders reviewed in Redline, such as which drawing changes are undeclared and who signed them off.
+      icon: resource:main;redline-icon.svg
+      prompt: resource:main;prompts/checker.txt
+      conversationStarters:
+        - Which change orders are blocked by undeclared drawing changes?
+        - What changed on the drawing in ENG-1, and is it declared?
+        - Who signed off the changes on ENG-1?
+      actions:
+        - get-drawing-review
+        - find-blocked-change-orders
+  action:
+    - key: get-drawing-review
+      name: Get drawing review
+      function: getDrawingReview
+      actionVerb: GET
+      description: Returns the Redline review of one change order. Each drawing change with its zone, whether a change note declares it, who signed it off, and whether release is blocked.
+      inputs:
+        issueKey:
+          title: Work item key
+          type: string
+          required: true
+          description: The key of the change-order work item, for example ENG-1.
+    - key: find-blocked-change-orders
+      name: Find blocked change orders
+      function: findBlockedChangeOrders
+      actionVerb: GET
+      description: Lists change-order work items whose Redline release gate is blocked, optionally within one project.
+      inputs:
+        projectKey:
+          title: Project key
+          type: string
+          required: false
+          description: Limit the search to this project key, for example ENG.
+  function:
+    - key: resolver
+      handler: index.handler
+    - key: getDrawingReview
+      handler: index.getDrawingReview
+    - key: findBlockedChangeOrders
+      handler: index.findBlockedChangeOrders
+resources:
+  - key: main
+    path: static/lighttable/dist
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 512
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/1f09faad-22a5-466a-ae4c-50d4a617e754

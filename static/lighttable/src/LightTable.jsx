@@ -1,0 +1,605 @@
+// The light table: two drawing revisions registered on one sheet, every change clouded, every cloud
+// tied to a change-note line or held as undeclared, and the release gate that follows from it.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { invoke, closeModal } from './bridge.js';
+import { analyse, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
+import { cloudPath } from './cloud.js';
+
+const MODES = [
+  { key: 'overlay', label: 'Overlay', hint: 'Shared lines in graphite, removed in red, added in blue' },
+  { key: 'swipe', label: 'Swipe', hint: 'Drag the divider to wipe between revisions' },
+  { key: 'blink', label: 'Blink', hint: 'Alternates the two revisions so changes flicker' },
+  { key: 'a', label: 'Rev A', hint: 'The earlier revision only' },
+  { key: 'b', label: 'Rev B', hint: 'The new revision only' },
+];
+const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed' };
+const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function useCanvasImage(img) {
+  return useMemo(() => {
+    if (!img) return null;
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    c.getContext('2d').putImageData(img, 0, 0); return c;
+  }, [img]);
+}
+
+export default function LightTable() {
+  const [order, setOrder] = useState(null);
+  const [stage, setStage] = useState('Opening the change order');
+  const [error, setError] = useState(null);
+  const [res, setRes] = useState(null);
+  const [decisions, setDecisions] = useState({});
+  const [mode, setMode] = useState('overlay');
+  const [sel, setSel] = useState(null);
+  const [phase, setPhase] = useState('dark'); // dark -> sweep -> clouds -> ready
+  const [blinkOn, setBlinkOn] = useState(false);
+  const [swipe, setSwipe] = useState(0.5);
+  const [saved, setSaved] = useState('');
+  const [cam, setCam] = useState({ s: 1, x: 0, y: 0 });
+  const [print, setPrint] = useState(null); // { att, status, result, error }
+  const [markDecisions, setMarkDecisions] = useState({});
+  const [flatten, setFlatten] = useState(null); // { url, src, from, to, t } while the photo settles onto the sheet
+  const stageRef = useRef(null), camRef = useRef(cam);
+  camRef.current = cam;
+
+  // Load the change order and both revisions, then run the engine once.
+  useEffect(() => {
+    (async () => {
+      try {
+        const o = await invoke('getChangeOrder');
+        setOrder(o);
+        const pdfs = o.attachments;
+        if (pdfs.length < 2) { setError('Attach two PDF revisions of the drawing to this work item, oldest first.'); return; }
+        const [revA, revB] = pdfs.slice(-2);
+        const r = await analyse(invoke, revA, revB, o.notes, setStage);
+        setRes({ ...r, revA, revB });
+        const prior = o.review && o.review.revB?.id === revB.id ? o.review.decisions || {} : {};
+        const init = {};
+        for (const c of r.clouds) init[c.id] = prior[c.id] || (c.note ? { status: 'declared', note: c.note } : { status: 'open' });
+        setDecisions(init);
+        if (o.review?.markDecisions && o.review.revB?.id === revB.id) setMarkDecisions(o.review.markDecisions);
+      } catch (e) { setError(e.message || String(e)); }
+    })();
+  }, []);
+
+  const overlayCanvas = useCanvasImage(useMemo(() => res && composite(res.hiA, res.hiBw), [res]));
+  const aCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiA, [43, 47, 54]), [res]));
+  const bCanvas = useCanvasImage(useMemo(() => res && grayToImage(res.hiBw, [44, 74, 154]), [res]));
+  const printCanvas = useCanvasImage(useMemo(() => (print?.status === 'done' ? print.result.flat : null), [print]));
+
+  // Fit the sheet to the stage, then play the one orchestrated moment: the table lights up, clouds draw.
+  useEffect(() => {
+    if (!res || !stageRef.current) return;
+    const r = stageRef.current.getBoundingClientRect();
+    const s = Math.min((r.width - 48) / res.A.w, (r.height - 48) / res.A.h);
+    setCam({ s, x: (r.width - res.A.w * s) / 2, y: (r.height - res.A.h * s) / 2 });
+    if (reduceMotion) { setPhase('ready'); return; }
+    setPhase('sweep');
+    const t1 = setTimeout(() => setPhase('clouds'), 1250);
+    const t2 = setTimeout(() => setPhase('ready'), 1250 + 260 * res.clouds.length + 600);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [res]);
+
+  useEffect(() => {
+    if (mode !== 'blink') return;
+    const t = setInterval(() => setBlinkOn((v) => !v), 650);
+    return () => clearInterval(t);
+  }, [mode]);
+
+  // Paper markups: read a photo of a marked-up print, play the photo settling flat onto the sheet,
+  // then show each pen mark as a markup that needs an answer.
+  const readPhoto = useCallback(async (att) => {
+    setPrint({ att, status: 'reading' });
+    try {
+      const photo = await loadPhoto(invoke, att);
+      const result = readPrint(photo, res);
+      if (result.error) { setPrint({ att, status: 'error', error: result.error }); return; }
+      const url = photo.canvas.toDataURL('image/jpeg', 0.85);
+      const r = stageRef.current.getBoundingClientRect(), c = camRef.current;
+      const fitK = Math.min((r.width * 0.86) / photo.w, (r.height * 0.86) / photo.h);
+      const ox = (r.width - photo.w * fitK) / 2, oy = (r.height - photo.h * fitK) / 2;
+      const from = result.corners.map(([x, y]) => [ox + x * fitK, oy + y * fitK]);
+      const to = [[c.x, c.y], [c.x + res.A.w * c.s, c.y], [c.x + res.A.w * c.s, c.y + res.A.h * c.s], [c.x, c.y + res.A.h * c.s]];
+      setMarkDecisions((m) => Object.fromEntries(result.marks.map((k) => [k.id, m[k.id] || { status: 'open' }])));
+      if (reduceMotion) { setPrint({ att, status: 'done', result }); setMode('print'); return; }
+      // hold the photo as taken for a beat, then let it settle onto the sheet
+      setFlatten({ url, src: result.corners, from, to, t: 0, w: photo.w, h: photo.h });
+      await new Promise((ok) => setTimeout(ok, 700));
+      const t0 = performance.now();
+      await new Promise((ok) => {
+        const step = (now) => {
+          const t = Math.min(1, (now - t0) / 1100);
+          setFlatten((f) => f && { ...f, t: 1 - Math.pow(1 - t, 3) });
+          if (t < 1) requestAnimationFrame(step); else ok();
+        };
+        requestAnimationFrame(step);
+      });
+      setPrint({ att, status: 'done', result }); setMode('print');
+      setTimeout(() => setFlatten(null), 450);
+    } catch (e) { setPrint({ att, status: 'error', error: e.message || String(e) }); }
+  }, [res]);
+
+  useEffect(() => {
+    if (phase === 'ready' && !print && order?.images?.length) readPhoto(order.images[order.images.length - 1]);
+  }, [phase]);
+
+  async function addPhoto(file) {
+    setPrint({ status: 'reading' });
+    try {
+      const up = await photoForUpload(file);
+      const att = await invoke('uploadPhoto', up);
+      setOrder((o) => ({ ...o, images: [...(o.images || []), att] }));
+      await readPhoto(att);
+    } catch (e) { setPrint({ status: 'error', error: e.message || String(e) }); }
+  }
+
+  const marks = print?.status === 'done' ? print.result.marks : [];
+  const decideMark = (id, patch) => setMarkDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
+  async function raiseMark(m) {
+    decideMark(m.id, { status: 'raising' });
+    try {
+      const crop = cropJpeg(print.result.flat, m);
+      const r = await invoke('raiseMarkup', { zone: m.zone, summary: order.summary, project: order.project, issuetype: order.issuetype, crop, photo: print.att?.filename });
+      decideMark(m.id, { status: 'raised', key: r.key, by: order.user.displayName, at: new Date().toISOString() });
+    } catch (e) { decideMark(m.id, { status: 'open', error: e.message }); }
+  }
+
+  // Autosave the review onto the work item (an issue property the release validator reads).
+  const gate = useMemo(() => gateOf(res?.clouds || [], decisions, marks, markDecisions), [res, decisions, marks, markDecisions]);
+  useEffect(() => {
+    if (!res || !Object.keys(decisions).length) return;
+    const t = setTimeout(async () => {
+      setSaved('Saving');
+      try {
+        await invoke('saveReview', { review: {
+          engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
+          revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
+          clouds: res.clouds.map(({ id, n, zone, kind, x0, y0, x1, y1 }) => ({ id, n, zone, kind, box: [x0, y0, x1, y1] })),
+          decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
+          print: print?.status === 'done' ? { id: print.att.id, filename: print.att.filename } : null,
+          marks: marks.map(({ id, n, zone, x0, y0, x1, y1 }) => ({ id, n, zone, box: [x0, y0, x1, y1] })), markDecisions,
+        } });
+        setSaved('Saved to ' + (order?.key || 'the work item'));
+      } catch (e) { setSaved('Not saved: ' + e.message); }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [decisions, res, markDecisions, print]);
+
+  const flyTo = useCallback((c) => {
+    if (!stageRef.current || !c) return;
+    const r = stageRef.current.getBoundingClientRect();
+    const bw = c.x1 - c.x0 + 160, bh = c.y1 - c.y0 + 160;
+    const s = Math.min(3.2, Math.min(r.width / bw, r.height / bh));
+    const target = { s, x: r.width / 2 - ((c.x0 + c.x1) / 2) * s, y: r.height / 2 - ((c.y0 + c.y1) / 2) * s };
+    animateCam(camRef.current, target, setCam);
+  }, []);
+
+  const select = (c) => { setSel(c.id); flyTo(c); };
+  const decide = (id, patch) => setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
+  const signOff = (id) => decide(id, { signedBy: order.user.displayName, signedAt: new Date().toISOString() });
+
+  // Keyboard: arrows walk the clouds, digits declare against a note line, S signs off, F fits the sheet.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!res || e.target.closest?.('select, textarea, input')) return;
+      const list = res.clouds, i = list.findIndex((c) => c.id === sel);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j') { select(list[(i + 1) % list.length]); e.preventDefault(); }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k') { select(list[(i - 1 + list.length) % list.length]); e.preventDefault(); }
+      if (sel && /^[1-9]$/.test(e.key) && order.notes.some((n) => n.n === +e.key)) decide(sel, { status: 'declared', note: +e.key });
+      if (sel && e.key.toLowerCase() === 's') signOff(sel);
+      if (e.key.toLowerCase() === 'f') fit();
+    };
+    addEventListener('keydown', onKey); return () => removeEventListener('keydown', onKey);
+  });
+
+  function fit() {
+    const r = stageRef.current.getBoundingClientRect();
+    const s = Math.min((r.width - 48) / res.A.w, (r.height - 48) / res.A.h);
+    animateCam(camRef.current, { s, x: (r.width - res.A.w * s) / 2, y: (r.height - res.A.h * s) / 2 }, setCam);
+  }
+
+  // Pan with drag, zoom around the pointer with the wheel.
+  const drag = useRef(null);
+  const onPointerDown = (e) => { if (e.target.closest('.rl-swipe-handle')) return; drag.current = { x: e.clientX, y: e.clientY, cam: camRef.current }; e.currentTarget.setPointerCapture(e.pointerId); };
+  const onPointerMove = (e) => { const d = drag.current; if (!d) return; setCam({ ...d.cam, x: d.cam.x + e.clientX - d.x, y: d.cam.y + e.clientY - d.y }); };
+  const onPointerUp = () => { drag.current = null; };
+  const onWheel = (e) => {
+    const r = stageRef.current.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    const c = camRef.current, s = Math.max(0.15, Math.min(6, c.s * Math.exp(-e.deltaY * 0.0015)));
+    setCam({ s, x: px - ((px - c.x) / c.s) * s, y: py - ((py - c.y) / c.s) * s });
+  };
+
+  if (error) return <Shell order={order}><div className="rl-empty"><h2>Redline can't compare this change order yet</h2><p>{error}</p></div></Shell>;
+  if (!res) return <Shell order={order}><Warmup stage={stage} /></Shell>;
+
+  const { A } = res;
+  const shown = mode === 'blink' ? (blinkOn ? 'b' : 'a') : mode;
+  const lit = phase !== 'dark';
+
+  return (
+    <Shell order={order} gate={gate} revs={[res.revA, res.revB]} saved={saved}>
+      <div className="rl-body">
+        <section className="rl-table" aria-label="Light table">
+          <div className="rl-modes" role="tablist" aria-label="Compare mode">
+            {[...MODES, ...(print?.status === 'done' ? [{ key: 'print', label: 'Marked-up print', hint: 'The phone photo, flattened onto the sheet' }] : [])].map((m) => (
+              <button key={m.key} role="tab" aria-selected={mode === m.key} title={m.hint} className={mode === m.key ? 'on' : ''} onClick={() => setMode(m.key)}>{m.label}</button>
+            ))}
+            <span className="rl-legend" aria-hidden={mode !== 'overlay'} data-on={mode === 'overlay'}>
+              <i className="sw g" />In both <i className="sw r" />Removed <i className="sw b" />Added
+            </span>
+            <button className="rl-fit" onClick={fit} title="Fit the sheet (F)">Fit sheet</button>
+          </div>
+          <div className={`rl-stage ${lit ? 'lit' : ''} phase-${phase}`} ref={stageRef}
+            onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onWheel={onWheel}>
+            <div className="rl-sheet" style={{ width: A.w, height: A.h, transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.s})` }}>
+              <Layer canvas={shown === 'overlay' ? overlayCanvas : shown === 'b' ? bCanvas : shown === 'print' ? printCanvas : aCanvas} />
+              {mode === 'swipe' && (
+                <>
+                  <div className="rl-swipe-top" style={{ clipPath: `inset(0 0 0 ${swipe * 100}%)` }}><Layer canvas={bCanvas} /></div>
+                  <SwipeHandle x={swipe} w={A.w} h={A.h} scale={cam.s} onChange={setSwipe} />
+                </>
+              )}
+              <Zones w={A.w} h={A.h} s={cam.s} />
+              <svg className="rl-clouds" width={A.w} height={A.h} viewBox={`0 0 ${A.w} ${A.h}`}>
+                {res.clouds.map((c, i) => {
+                  const d = decisions[c.id] || {}, state = cloudState(d);
+                  return (
+                    <g key={c.id} className={`rl-cloud ${state} ${sel === c.id ? 'sel' : ''}`}
+                      style={{ '--delay': `${i * 260}ms` }} onClick={(e) => { e.stopPropagation(); select(c); }}>
+                      {d.signedBy && <rect className="hl" x={c.x0 - 8} y={c.y0 - 8} width={c.x1 - c.x0 + 16} height={c.y1 - c.y0 + 16} rx="6" />}
+                      <path d={cloudPath(c.x0, c.y0, c.x1, c.y1, Math.max(8, 9 / cam.s), Math.max(7, Math.min(40, 8 / cam.s)))} pathLength="1" />
+                      <g className="tag" transform={`translate(${c.x1 + 9 / cam.s},${c.y0 - 9 / cam.s}) scale(${Math.min(2.5, 1 / cam.s)})`}>
+                        <path d="M0,-15 L15,11 L-15,11 Z" />
+                        <text y="7" textAnchor="middle">{c.n}</text>
+                      </g>
+                    </g>
+                  );
+                })}
+                {marks.map((m, i) => {
+                  const d = markDecisions[m.id] || {};
+                  return (
+                    <g key={m.id} className={`rl-mark ${d.status || 'open'} ${sel === m.id ? 'sel' : ''}`} style={{ '--delay': `${i * 220}ms` }}
+                      onClick={(e) => { e.stopPropagation(); select(m); }}>
+                      <ellipse cx={(m.x0 + m.x1) / 2} cy={(m.y0 + m.y1) / 2} rx={(m.x1 - m.x0) / 2 + 14 / cam.s} ry={(m.y1 - m.y0) / 2 + 12 / cam.s} pathLength="1" />
+                      <g className="tag" transform={`translate(${m.x0 - 6 / cam.s},${m.y0 - 6 / cam.s}) scale(${Math.min(2.5, 1 / cam.s)})`}>
+                        <circle r="13" /><text y="5" textAnchor="middle">P{m.n}</text>
+                      </g>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+            {flatten && (
+              <img className="rl-flatten" src={flatten.url} alt="" aria-hidden="true" width={flatten.w} height={flatten.h}
+                style={{ transform: quadMatrix(flatten.src, flatten.from.map((p, i) => [p[0] + (flatten.to[i][0] - p[0]) * flatten.t, p[1] + (flatten.to[i][1] - p[1]) * flatten.t])),
+                  opacity: flatten.t >= 1 ? 0 : 1 }} />
+            )}
+            <div className="rl-sweep" aria-hidden="true" />
+            <Zoom cam={cam} />
+          </div>
+        </section>
+        <Ledger res={res} order={order} decisions={decisions} sel={sel} phase={phase} gate={gate}
+          onSelect={select} onDecide={decide} onSign={signOff}
+          print={print} marks={marks} markDecisions={markDecisions} onReadPhoto={readPhoto} onAddPhoto={addPhoto}
+          onDecideMark={decideMark} onRaiseMark={raiseMark} />
+      </div>
+    </Shell>
+  );
+}
+
+function cloudState(d) {
+  if (d.status === 'rejected') return 'rejected';
+  if (d.status === 'declared' || d.status === 'accepted') return d.signedBy ? 'signed' : 'declared';
+  return 'undeclared';
+}
+
+export function gateOf(clouds, decisions, marks = [], markDecisions = {}) {
+  let open = 0, unsigned = 0, rejected = 0;
+  for (const c of clouds) {
+    const d = decisions[c.id] || {};
+    if (d.status === 'rejected') rejected++;
+    else if (d.status !== 'declared' && d.status !== 'accepted') open++;
+    else if (!d.signedBy) unsigned++;
+  }
+  // a pen markup from the floor needs an answer too: raised as a work item, covered by a change, or dismissed
+  const markups = marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)).length;
+  const blocked = open + unsigned + rejected + markups > 0;
+  let text;
+  if (!clouds.length && !marks.length) text = 'No differences found between the revisions';
+  else if (rejected) text = `${rejected} ${rejected === 1 ? 'change was' : 'changes were'} sent back to the drafter`;
+  else if (open) text = `${open} ${open === 1 ? 'change on the sheet is' : 'changes on the sheet are'} not in the change notes`;
+  else if (markups) text = `${markups} pen ${markups === 1 ? 'markup on the printed sheet needs' : 'markups on the printed sheet need'} an answer`;
+  else if (unsigned) text = `${unsigned} declared ${unsigned === 1 ? 'change needs' : 'changes need'} a sign-off`;
+  else text = `All ${clouds.length} changes declared and signed off`;
+  return { blocked, open, unsigned, rejected, markups, text };
+}
+
+// A JPEG of one markup cut from the flattened photo, attached to the work item raised for it.
+function cropJpeg(flat, m) {
+  const pad = 40, x = Math.max(0, Math.floor(m.x0 - pad)), y = Math.max(0, Math.floor(m.y0 - pad));
+  const w = Math.min(flat.width - x, Math.ceil(m.x1 - m.x0 + 2 * pad)), h = Math.min(flat.height - y, Math.ceil(m.y1 - m.y0 + 2 * pad));
+  const c = document.createElement('canvas'); c.width = w * 2; c.height = h * 2;
+  const src = document.createElement('canvas'); src.width = flat.width; src.height = flat.height; src.getContext('2d').putImageData(flat, 0, 0);
+  c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, w * 2, h * 2);
+  return c.toDataURL('image/jpeg', 0.88).split(',')[1];
+}
+
+function Shell({ order, gate, revs, saved, children }) {
+  return (
+    <div className="rl-app">
+      <header className="rl-head">
+        <div className="rl-title">
+          <span className="rl-key">{order?.key || ''}</span>
+          <h1>{order?.summary || 'Redline'}</h1>
+          {revs && <span className="rl-revs"><b>{revName(revs[0])}</b><span aria-hidden="true"> to </span><b className="b">{revName(revs[1])}</b></span>}
+        </div>
+        {gate && (
+          <div className={`rl-gate ${gate.blocked ? 'blocked' : 'clear'}`} role="status">
+            <span className="dot" aria-hidden="true" />
+            <span><b>{gate.blocked ? 'Release blocked' : 'Ready to release'}</b>{gate.text}</span>
+          </div>
+        )}
+        <span className="rl-saved" aria-live="polite">{saved}</span>
+        <button className="rl-close" onClick={closeModal} aria-label="Close the light table">Close</button>
+      </header>
+      {children}
+    </div>
+  );
+}
+
+const revName = (a) => (a.filename.match(/rev[-_ ]?([A-Z0-9]+)/i)?.[1] ? 'Rev ' + a.filename.match(/rev[-_ ]?([A-Z0-9]+)/i)[1].toUpperCase() : a.filename);
+
+function Warmup({ stage }) {
+  return (
+    <div className="rl-warm">
+      <div className="rl-warm-sheet"><div className="rl-warm-bar" /></div>
+      <p>{stage}…</p>
+    </div>
+  );
+}
+
+function Layer({ canvas }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current; if (!el || !canvas) return;
+    el.width = canvas.width; el.height = canvas.height;
+    el.getContext('2d').drawImage(canvas, 0, 0);
+  }, [canvas]);
+  return <canvas ref={ref} className="rl-layer" />;
+}
+
+function SwipeHandle({ x, w, h, scale, onChange }) {
+  const onDown = (e) => {
+    e.stopPropagation();
+    const sheet = e.currentTarget.parentElement, rect = () => sheet.getBoundingClientRect();
+    const move = (ev) => onChange(Math.max(0, Math.min(1, (ev.clientX - rect().left) / rect().width)));
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  };
+  return (
+    <div className="rl-swipe-handle" style={{ left: x * w, height: h, '--inv': 1 / scale }} onPointerDown={onDown}
+      role="slider" aria-label="Swipe between revisions" aria-valuenow={Math.round(x * 100)} tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'ArrowLeft') onChange(Math.max(0, x - 0.05)); if (e.key === 'ArrowRight') onChange(Math.min(1, x + 0.05)); }}>
+      <span>A</span><span>B</span>
+    </div>
+  );
+}
+
+// Zone ruler around the sheet, as printed in the border of a drawing: columns 8 to 1 from left to
+// right, rows A upward from the bottom. Clouds and change notes both speak in these zones.
+function Zones({ w, h, s }) {
+  const k = 1 / s, cols = [...Array(ZONE_COLS)].map((_, i) => ZONE_COLS - i), rows = [...Array(ZONE_ROWS)].map((_, i) => String.fromCharCode(65 + ZONE_ROWS - 1 - i));
+  return (
+    <svg className="rl-zones" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+      {cols.map((c, i) => (
+        <g key={c} style={{ fontSize: 12 * k }}>
+          {i > 0 && <line x1={(i * w) / ZONE_COLS} x2={(i * w) / ZONE_COLS} y1={-14 * k} y2={-4 * k} />}
+          {i > 0 && <line x1={(i * w) / ZONE_COLS} x2={(i * w) / ZONE_COLS} y1={h + 4 * k} y2={h + 14 * k} />}
+          <text x={((i + 0.5) * w) / ZONE_COLS} y={-6 * k} textAnchor="middle">{c}</text>
+          <text x={((i + 0.5) * w) / ZONE_COLS} y={h + 16 * k} textAnchor="middle">{c}</text>
+        </g>
+      ))}
+      {rows.map((r, i) => (
+        <g key={r} style={{ fontSize: 12 * k }}>
+          {i > 0 && <line y1={(i * h) / ZONE_ROWS} y2={(i * h) / ZONE_ROWS} x1={-14 * k} x2={-4 * k} />}
+          {i > 0 && <line y1={(i * h) / ZONE_ROWS} y2={(i * h) / ZONE_ROWS} x1={w + 4 * k} x2={w + 14 * k} />}
+          <text x={-10 * k} y={((i + 0.5) * h) / ZONE_ROWS} textAnchor="middle" dominantBaseline="middle">{r}</text>
+          <text x={w + 10 * k} y={((i + 0.5) * h) / ZONE_ROWS} textAnchor="middle" dominantBaseline="middle">{r}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function Zoom({ cam }) {
+  return <div className="rl-zoom" aria-hidden="true">{Math.round(cam.s * 100)}%</div>;
+}
+
+function Ledger({ res, order, decisions, sel, phase, gate, onSelect, onDecide, onSign, print, marks, markDecisions, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark }) {
+  const shown = phase === 'ready' ? res.clouds.length : phase === 'clouds' ? res.clouds.length : 0;
+  return (
+    <aside className="rl-ledger" aria-label="Change ledger">
+      <section className="rl-notes">
+        <h2>Change notes</h2>
+        <ol>
+          {order.notes.map((n) => {
+            const linked = res.clouds.filter((c) => decisions[c.id]?.note === n.n);
+            return (
+              <li key={n.n}>
+                <span className="num">{n.n}</span>
+                <p>{n.text}</p>
+                <span className="links">{linked.length ? linked.map((c) => <button key={c.id} className="delta" onClick={() => onSelect(c)} aria-label={`Show change ${c.n}`}>{c.n}</button>) : <em>No change on the sheet</em>}</span>
+              </li>
+            );
+          })}
+          {!order.notes.length && <li className="none">The work item has no numbered change notes. Number each change in the description, for example "1. Zone D3: bore Ø25 to Ø25.5".</li>}
+        </ol>
+      </section>
+      <section className="rl-found">
+        <h2>Found on the sheet <span>{res.clouds.length}</span></h2>
+        <ul>
+          {res.clouds.map((c, i) => (
+            <CloudRow key={c.id} c={c} i={i} d={decisions[c.id] || {}} notes={order.notes} res={res}
+              visible={i < shown} active={sel === c.id} onSelect={onSelect} onDecide={onDecide} onSign={onSign} />
+          ))}
+        </ul>
+      </section>
+      <PrintSection order={order} res={res} print={print} marks={marks} markDecisions={markDecisions} sel={sel}
+        onSelect={onSelect} onReadPhoto={onReadPhoto} onAddPhoto={onAddPhoto} onDecideMark={onDecideMark} onRaiseMark={onRaiseMark} />
+      <footer className="rl-foot">
+        <p>Compared {res.revA.filename} with {res.revB.filename} at {res.dpi} dpi in {(res.ms / 1000).toFixed(2)} s. Nothing left Atlassian.</p>
+        <p className="keys">Arrows step through changes, 1 to 9 declare against a note, S signs off, F fits the sheet.</p>
+      </footer>
+    </aside>
+  );
+}
+
+// Photos of printed sheets marked up in pen on the shop floor. A photo attached from the Jira mobile app
+// is read automatically; one can also be taken or chosen here.
+function PrintSection({ order, res, print, marks, markDecisions, sel, onSelect, onReadPhoto, onAddPhoto, onDecideMark, onRaiseMark }) {
+  const images = order.images || [];
+  const fileRef = useRef(null);
+  return (
+    <section className="rl-prints">
+      <h2>Marked-up prints <span>{images.length || ''}</span></h2>
+      {print?.status === 'reading' && <p className="rl-reading">Lining the photo up with {revName(res.revB)}…</p>}
+      {print?.status === 'error' && <p className="rl-print-err">{print.error}</p>}
+      {print?.status === 'done' && (
+        <p className="rl-print-meta">{print.att.filename}: {marks.length ? `${marks.length} pen ${marks.length === 1 ? 'markup' : 'markups'} found` : 'no pen markups found'}, lined up with {revName(res.revB)} in {(print.result.ms / 1000).toFixed(1)} s.</p>
+      )}
+      <ul>
+        {marks.map((m, i) => {
+          const d = markDecisions[m.id] || {};
+          return (
+            <li key={m.id} className={`rl-row rl-mrow in ${d.status || 'open'} ${sel === m.id ? 'active' : ''}`} style={{ '--delay': `${i * 220}ms` }}>
+              <button className="rl-row-main" onClick={() => onSelect(m)}>
+                <span className="pen">P{m.n}</span>
+                <span className="what"><b>Zone {m.zone}</b>Pen markup on the print</span>
+                <MarkCrop flat={print.result.flat} m={m} />
+              </button>
+              <div className="rl-row-act">
+                {d.status === 'raised' ? <p className="st">Raised as <b>{d.key}</b> by {d.by}. <button className="link" onClick={() => onDecideMark(m.id, { status: 'open' })}>Undo</button></p>
+                  : d.status === 'covered' ? <p className="st">Covered by change {d.cloud}. <button className="link" onClick={() => onDecideMark(m.id, { status: 'open' })}>Undo</button></p>
+                  : d.status === 'dismissed' ? <p className="st">Dismissed: not a drawing change. <button className="link" onClick={() => onDecideMark(m.id, { status: 'open' })}>Undo</button></p>
+                  : (
+                    <>
+                      <p className="st warn">Needs an answer{d.error ? `: ${d.error}` : ''}</p>
+                      {(() => {
+                        const hit = res.clouds.find((c) => c.x0 <= m.x1 && m.x0 <= c.x1 && c.y0 <= m.y1 && m.y0 <= c.y1);
+                        return hit && <p className="suggest">Drawn on change {hit.n}. <button className="link" onClick={() => onDecideMark(m.id, { status: 'covered', cloud: hit.n })}>Mark as covered by change {hit.n}</button></p>;
+                      })()}
+                      <div className="rl-choices">
+                        <button className="rl-btn primary" disabled={d.status === 'raising'} onClick={() => onRaiseMark(m)}>{d.status === 'raising' ? 'Raising…' : 'Raise as work item'}</button>
+                        {res.clouds.length > 0 && (
+                          <select aria-label={`Markup P${m.n} is covered by a change`} value="" onChange={(e) => e.target.value && onDecideMark(m.id, { status: 'covered', cloud: +e.target.value })}>
+                            <option value="">Covered by change…</option>
+                            {res.clouds.map((c) => <option key={c.id} value={c.n}>Change {c.n}, zone {c.zone}</option>)}
+                          </select>
+                        )}
+                        <button className="rl-btn" onClick={() => onDecideMark(m.id, { status: 'dismissed' })}>Dismiss</button>
+                      </div>
+                    </>
+                  )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {images.length > 1 && (
+        <div className="rl-photos">
+          {images.map((a) => <button key={a.id} className={`rl-btn ${print?.att?.id === a.id ? 'on' : ''}`} onClick={() => onReadPhoto(a)}>{a.filename}</button>)}
+        </div>
+      )}
+      {!images.length && <p className="rl-hint">Photograph the printed sheet with its pen markups and attach the photo to this work item from the Jira mobile app, or add it here. Redline lines it up with {revName(res.revB)} and lists every markup.</p>}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files[0] && onAddPhoto(e.target.files[0])} />
+      <button className="rl-btn" onClick={() => fileRef.current.click()}>Add a photo of a marked-up print</button>
+    </section>
+  );
+}
+
+function MarkCrop({ flat, m }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const pad = 16, x = Math.max(0, Math.floor(m.x0 - pad)), y = Math.max(0, Math.floor(m.y0 - pad));
+    const w = Math.min(flat.width - x, Math.ceil(m.x1 - m.x0 + 2 * pad)), h = Math.min(flat.height - y, Math.ceil(m.y1 - m.y0 + 2 * pad));
+    const el = ref.current, H = 46, W = Math.max(40, Math.min(160, Math.round((w / h) * H)));
+    el.width = W; el.height = H;
+    const src = document.createElement('canvas'); src.width = flat.width; src.height = flat.height; src.getContext('2d').putImageData(flat, 0, 0);
+    el.getContext('2d').drawImage(src, x, y, w, h, 0, 0, W, H);
+  }, [flat, m]);
+  return <canvas ref={ref} className="rl-crop" role="img" aria-label="The markup on the print" />;
+}
+
+function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, onSign }) {
+  const state = cloudState(d);
+  return (
+    <li className={`rl-row ${state} ${active ? 'active' : ''} ${visible ? 'in' : ''}`} style={{ '--delay': `${i * 260}ms` }}>
+      <button className="rl-row-main" onClick={() => onSelect(c)}>
+        <span className="delta">{c.n}</span>
+        <span className="what"><b>Zone {c.zone}</b>{KIND_TEXT[c.kind]}</span>
+        <Crop res={res} c={c} />
+      </button>
+      <div className="rl-row-act">
+        {state === 'rejected' ? (
+          <p className="st">Sent back to the drafter. <button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null })}>Undo</button></p>
+        ) : d.status === 'declared' || d.status === 'accepted' ? (
+          <>
+            <p className="st">{d.status === 'declared' ? <>Declared in note {d.note}</> : <>Accepted as a drawing correction</>}
+              {' '}<button className="link" onClick={() => onDecide(c.id, { status: 'open', note: null, signedBy: null, signedAt: null })}>Change</button></p>
+            {d.signedBy ? <p className="signed">Signed off by {d.signedBy}, {new Date(d.signedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>
+              : <button className="rl-btn primary" onClick={() => onSign(c.id)}>Sign off</button>}
+          </>
+        ) : (
+          <>
+            <p className="st warn">Not in the change notes</p>
+            {c.suggest && <p className="suggest">Near note {c.suggest}. <button className="link" onClick={() => onDecide(c.id, { status: 'declared', note: c.suggest })}>Declare in note {c.suggest}</button></p>}
+            <div className="rl-choices">
+              <select aria-label={`Declare change ${c.n} in a note`} value="" onChange={(e) => e.target.value && onDecide(c.id, { status: 'declared', note: +e.target.value })}>
+                <option value="">Declare in note…</option>
+                {notes.map((n) => <option key={n.n} value={n.n}>Note {n.n}</option>)}
+              </select>
+              <button className="rl-btn" onClick={() => onDecide(c.id, { status: 'accepted', note: null })}>Accept as correction</button>
+              <button className="rl-btn danger" onClick={() => onDecide(c.id, { status: 'rejected', note: null })}>Send back</button>
+            </div>
+          </>
+        )}
+      </div>
+    </li>
+  );
+}
+
+// Before/after crops of one change, so a reviewer can decide from the ledger without hunting the sheet.
+function Crop({ res, c }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const pad = 24, x = Math.max(0, c.x0 - pad), y = Math.max(0, c.y0 - pad);
+    const w = Math.min(res.A.w - x, c.x1 - c.x0 + 2 * pad), h = Math.min(res.A.h - y, c.y1 - c.y0 + 2 * pad);
+    const el = ref.current, H = 46, W = Math.max(40, Math.min(92, Math.round((w / h) * H)));
+    el.width = W * 2 + 6; el.height = H;
+    const ctx = el.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, el.width, H);
+    for (const [img, ox, tint] of [[res.A, 0, [43, 47, 54]], [res.Bw, W + 6, [44, 74, 154]]]) {
+      const sub = new ImageData(w, h);
+      for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
+        const k = 1 - img.data[(y + yy) * img.w + x + xx] / 255, j = (yy * w + xx) * 4;
+        sub.data[j] = 255 - k * (255 - tint[0]); sub.data[j + 1] = 255 - k * (255 - tint[1]); sub.data[j + 2] = 255 - k * (255 - tint[2]); sub.data[j + 3] = 255;
+      }
+      const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h; tmp.getContext('2d').putImageData(sub, 0, 0);
+      ctx.drawImage(tmp, ox, 0, W, H);
+    }
+  }, [res, c]);
+  return <canvas ref={ref} className="rl-crop" aria-label="Before and after" role="img" />;
+}
+
+function animateCam(from, to, set) {
+  if (reduceMotion) { set(to); return; }
+  const t0 = performance.now(), dur = 520;
+  const ease = (t) => 1 - Math.pow(1 - t, 3);
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / dur), k = ease(t);
+    const s = Math.exp(Math.log(from.s) + (Math.log(to.s) - Math.log(from.s)) * k);
+    set({ s, x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k });
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}

@@ -1,0 +1,187 @@
+// Turns two drawing revisions into everything the light table shows: rasters, the registered overlay,
+// revision clouds with drawing zones, and the links between clouds and the change notes.
+import { renderPage } from './pdf.js';
+import { compare, warpGray } from './engine/core.mjs';
+import { readMarkups } from './engine/markup.mjs';
+
+export const ENGINE_VERSION = 'redline-core 0.3';
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+// ASME Y14.1 style zones: columns numbered right to left, rows lettered bottom to top.
+export const ZONE_COLS = 8, ZONE_ROWS = 6;
+export function zoneOf(c, w, h) {
+  const cx = (c.x0 + c.x1) / 2, cy = (c.y0 + c.y1) / 2;
+  const col = ZONE_COLS - Math.min(ZONE_COLS - 1, Math.floor((cx / w) * ZONE_COLS));
+  const row = String.fromCharCode(65 + Math.min(ZONE_ROWS - 1, Math.floor(((h - cy) / h) * ZONE_ROWS)));
+  return row + col;
+}
+
+export async function loadRevision(invoke, att, dpi) {
+  const r = await invoke('getAttachment', { id: att.id });
+  return renderPage(b64(r.data), 1, dpi);
+}
+
+// The overlay a checker reads on a light table: shared line work in graphite, lines only on rev A in red
+// (gone in rev B), lines only on rev B in blue (new in rev B). Face shading is kept faint.
+export function composite(A, Bw) {
+  const { w, h } = A, out = new ImageData(w, h), d = out.data;
+  for (let i = 0, j = 0; i < A.data.length; i++, j += 4) {
+    const a = 1 - A.data[i] / 255, b = 1 - Bw.data[i] / 255; // darkness 0..1
+    const inkA = a > 0.3, inkB = b > 0.3;
+    let r = 255, g = 255, bl = 255;
+    if (inkA && inkB) { const k = Math.max(a, b); r = 255 - k * 212; g = 255 - k * 208; bl = 255 - k * 201; } // graphite #2B2F36
+    else if (inkA) { const k = a; r = 255 - k * 40; g = 255 - k * 217; bl = 255 - k * 194; } // red #D7263D
+    else if (inkB) { const k = b; r = 255 - k * 211; g = 255 - k * 181; bl = 255 - k * 101; } // diazo #2C4A9A
+    else { const k = Math.max(a, b) * 0.5; r = 255 - k * 60; g = 255 - k * 55; bl = 255 - k * 40; }
+    d[j] = r; d[j + 1] = g; d[j + 2] = bl; d[j + 3] = 255;
+  }
+  return out;
+}
+
+export function grayToImage(img, tint) {
+  const out = new ImageData(img.w, img.h), d = out.data;
+  for (let i = 0, j = 0; i < img.data.length; i++, j += 4) {
+    const k = 1 - img.data[i] / 255;
+    d[j] = 255 - k * (255 - tint[0]); d[j + 1] = 255 - k * (255 - tint[1]); d[j + 2] = 255 - k * (255 - tint[2]); d[j + 3] = 255;
+  }
+  return out;
+}
+
+// Match each cloud to a change-note line that names its zone ("Zone D3: ..."). Engineers already write
+// zones into change notes, so this is a deterministic link, not a guess.
+export function linkNotes(clouds, notes) {
+  const zoneRe = /\bzones?\s+([A-H]\d{1,2}(?:\s*(?:,|and|&)\s*[A-H]\d{1,2})*)/gi;
+  const byZone = new Map();
+  for (const n of notes) {
+    for (const m of n.text.matchAll(zoneRe)) for (const z of m[1].split(/\s*(?:,|and|&)\s*/i)) byZone.set(z.toUpperCase(), n.n);
+  }
+  // A note claims a cloud outright only when it is the single change in the zone the note names.
+  // Two changes in one zone, or a change one zone over, are offered as suggestions a person confirms,
+  // so an undeclared edit can never hide behind a declared one next to it.
+  const inZone = new Map();
+  for (const c of clouds) inZone.set(c.zone, (inZone.get(c.zone) || 0) + 1);
+  return clouds.map((c) => {
+    if (byZone.has(c.zone) && inZone.get(c.zone) === 1) return { ...c, note: byZone.get(c.zone), suggest: null };
+    const near = [c.zone, ...neighbours(c.zone)].find((z) => byZone.has(z));
+    return { ...c, note: null, suggest: near ? byZone.get(near) : null };
+  });
+}
+
+function neighbours(z) {
+  const r = z.charCodeAt(0), c = +z.slice(1), out = [];
+  for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+    const rr = r + dr, cc = c + dc;
+    if (rr >= 65 && rr < 65 + ZONE_ROWS && cc >= 1 && cc <= ZONE_COLS) out.push(String.fromCharCode(rr) + cc);
+  }
+  return out;
+}
+
+// Box-filter a raster down by an integer factor (the engine works at 150 dpi).
+export function downsample(img, k) {
+  if (k === 1) return img;
+  const w = Math.floor(img.w / k), h = Math.floor(img.h / k), out = new Uint8Array(w * h), n = k * k;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0;
+    for (let yy = 0; yy < k; yy++) { const row = (y * k + yy) * img.w + x * k; for (let xx = 0; xx < k; xx++) s += img.data[row + xx]; }
+    out[y * w + x] = s / n;
+  }
+  return { w, h, data: out };
+}
+
+export async function analyse(invoke, revA, revB, notes, onStage = () => {}) {
+  // Render once at display resolution (300 dpi, or 150 dpi for very large sheets) so zooming in stays
+  // crisp, and give the engine a 150 dpi copy.
+  const dpi = 150;
+  onStage('Reading both revisions');
+  const [hA, hB] = await Promise.all([loadRevision(invoke, revA, 300), loadRevision(invoke, revB, 300)]);
+  const k = hA.w * hA.h > 9e6 ? 1 : 2;
+  const [A, B] = k === 2 ? [downsample(hA, 2), downsample(hB, 2)] : await Promise.all([loadRevision(invoke, revA, dpi), loadRevision(invoke, revB, dpi)]);
+  onStage('Lining up the sheets');
+  await new Promise((r) => setTimeout(r, 0));
+  const t0 = performance.now();
+  const r = compare(A, B, { gap: 45 }); // changes within ~7 mm read as one edit
+  const Bw = warpGray(B, r.transform, A.w, A.h);
+  const ms = Math.round(performance.now() - t0);
+  // the same transform at display resolution: translation scales with the raster, the linear part does not
+  const p = r.transform, hiA = k === 2 ? hA : A;
+  const hiBw = k === 2 ? warpGray(hB, [p[0], p[1], p[2] * k, p[3], p[4], p[5] * k], hA.w, hA.h) : Bw;
+  const clouds = r.clouds
+    .sort((p, q) => p.y0 - q.y0 || p.x0 - q.x0)
+    .map((c, i) => ({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed, zone: zoneOf(c, A.w, A.h) }));
+  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes), transform: r.transform, ms, dpi, pages: [hA.pages, hB.pages] };
+}
+
+// ---------- paper markups ----------
+
+function rgbaOf(source, w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(source, 0, 0, w, h);
+  return { w, h, data: x.getImageData(0, 0, w, h).data, canvas: c };
+}
+
+// A phone photo of a printed revision, from a Jira attachment (the Jira mobile app attaches photos natively).
+export async function loadPhoto(invoke, att) {
+  const r = await invoke('getAttachment', { id: att.id });
+  const bmp = await createImageBitmap(new Blob([b64(r.data)], { type: att.mimeType || 'image/jpeg' }));
+  const k = Math.min(1, 3000 / Math.max(bmp.width, bmp.height));
+  return rgbaOf(bmp, Math.round(bmp.width * k), Math.round(bmp.height * k));
+}
+
+function invertAffine([a, b, c, d, e, f]) {
+  const det = a * e - b * d;
+  return [e / det, -b / det, (b * f - c * e) / det, -d / det, a / det, (c * d - a * f) / det];
+}
+const apply = (p, x, y) => [p[0] * x + p[1] * y + p[2], p[3] * x + p[4] * y + p[5]];
+
+// Line the photo up with the latest revision (the print it came from) and find the pen marks.
+// Everything returned is in rev A's frame, the frame the light table draws in.
+export function readPrint(photo, res) {
+  const ref = rgbaOf(res.bCanvas, res.B.w, res.B.h);
+  const r = readMarkups(photo, ref);
+  if (r.error) return r;
+  const q = invertAffine(res.transform); // rev B frame -> rev A frame
+  const marks = r.marks.map((m) => {
+    const pts = [apply(q, m.x0, m.y0), apply(q, m.x1, m.y0), apply(q, m.x1, m.y1), apply(q, m.x0, m.y1)];
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const box = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+    return { ...m, ...box, zone: zoneOf(box, res.A.w, res.A.h) };
+  });
+  // the flattened photo, resampled into rev A's frame so it can sit on the light table as a layer
+  const { w, h } = res.A, out = new ImageData(w, h), p = res.transform;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const [bx, by] = apply(p, x, y), ix = Math.round(bx), iy = Math.round(by), o = (y * w + x) * 4;
+    if (ix < 0 || iy < 0 || ix >= r.warped.w || iy >= r.warped.h) { out.data[o] = out.data[o + 1] = out.data[o + 2] = out.data[o + 3] = 255; continue; }
+    const i = (iy * r.warped.w + ix) * 4;
+    out.data[o] = r.warped.data[i]; out.data[o + 1] = r.warped.data[i + 1]; out.data[o + 2] = r.warped.data[i + 2]; out.data[o + 3] = 255;
+  }
+  return { marks, flat: out, corners: r.corners, photo, ms: r.ms };
+}
+
+// Shrink a phone photo for upload (Forge payloads stay under ~3.5 MB once base64 encoded).
+export async function photoForUpload(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+  const c = rgbaOf(bmp, Math.round(bmp.width * k), Math.round(bmp.height * k)).canvas;
+  const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return { name: (file.name || 'print-photo').replace(/\.[^.]+$/, '') + '.jpg', data: btoa(s) };
+}
+
+// CSS matrix3d that maps an element's own pixels (src quad) onto screen points (dst quad).
+export function quadMatrix(src, dst) {
+  const A = [], bb = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i], [u, v] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); bb.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); bb.push(v);
+  }
+  for (let c = 0; c < 8; c++) {
+    let pv = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[pv][c])) pv = r;
+    [A[c], A[pv]] = [A[pv], A[c]]; [bb[c], bb[pv]] = [bb[pv], bb[c]];
+    for (let r = 0; r < 8; r++) if (r !== c) { const k = A[r][c] / A[c][c]; for (let j = c; j < 8; j++) A[r][j] -= k * A[c][j]; bb[r] -= k * bb[c]; }
+  }
+  const h = bb.map((v, i) => v / A[i][i]);
+  return `matrix3d(${h[0]},${h[3]},0,${h[6]},${h[1]},${h[4]},0,${h[7]},0,0,1,0,${h[2]},${h[5]},0,1)`;
+}
