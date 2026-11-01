@@ -169,3 +169,22 @@ test('a save that changes nothing is recognised; any decision or finding change 
   assert.equal(sameReview(base, { ...base, decisions: { 's1-c1': { status: 'declared', note: 2, signedAt: 't1' } } }), false);
   assert.equal(sameReview(base, { ...base, clouds: [] }), false);
 });
+
+// ---------- the title block's revision letter ----------
+import { revisionOfName, titleBlockRevision } from '../static/lighttable/src/engine/titleblock.mjs';
+
+test('the revision a file name gives', () => {
+  assert.equal(revisionOfName('BRKT-0142_rev-D.pdf'), 'D');
+  assert.equal(revisionOfName('bracket REV C.pdf'), 'C');
+  assert.equal(revisionOfName('preview.pdf'), null);
+  assert.equal(revisionOfName('revised layout.pdf'), null);
+});
+
+test('the title block letter: split or joined words, lowest label wins, nothing outside the corner', () => {
+  const w = 1000, h = 800;
+  assert.deepEqual(titleBlockRevision([{ str: 'Rev', x0: 900, y0: 760, x1: 925, y1: 775 }, { str: 'D', x0: 930, y0: 760, x1: 938, y1: 775 }], w, h).letter, 'D');
+  assert.equal(titleBlockRevision([{ str: 'REV: C', x0: 900, y0: 760, x1: 950, y1: 775 }], w, h).letter, 'C');
+  assert.equal(titleBlockRevision([{ str: 'Rev', x0: 900, y0: 700, x1: 925, y1: 715 }, { str: 'B', x0: 930, y0: 700, x1: 938, y1: 715 },
+    { str: 'Rev', x0: 900, y0: 760, x1: 925, y1: 775 }, { str: 'C', x0: 930, y0: 760, x1: 938, y1: 775 }], w, h).letter, 'C');
+  assert.equal(titleBlockRevision([{ str: 'Rev', x0: 100, y0: 100, x1: 125, y1: 115 }, { str: 'D', x0: 130, y0: 100, x1: 138, y1: 115 }], w, h), null);
+});

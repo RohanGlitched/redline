@@ -27,6 +27,8 @@ It is for the people who sign off drawing changes: design checkers, quality engi
 
 The ledger lists each change with before-and-after crops; a change whose content only moved says how far (*Moved 3 mm right and down*). Plot stamps and labels that moved without changing are grouped as housekeeping, to look over and sign together, and line work a re-export nudged by under 0.7 mm is set aside in its own list, drawn on the sheet on request and can be counted back in. Arrow keys step through the changes, number keys declare one against a change note, and S signs it off. Multi-sheet drawings are compared sheet by sheet, and the release stays blocked until every sheet has been compared.
 
+**Title block.** The drawing being released must name its own revision: if revision D's title block still reads Rev C, that is a change like any other, and the release waits until someone answers it. A letter that moved on as it should is grouped with the housekeeping.
+
 **Marked-up prints.** Attach a phone photo of the printed sheet. Redline finds the sheet in the photo, flattens it onto revision B, separates pen red from red printed on the drawing, and lists each markup. Every markup must be raised as a work item, covered by a change, or dismissed before release.
 
 **Release gate.** A workflow validator that refuses the release transition until the review is complete. It reads the review from Redline's own app storage rather than from an issue property, re-checks that the review covers the two newest PDFs, and fails closed if Jira cannot say what is attached. See [Set up the release gate](docs/release-gate.md).
@@ -47,7 +49,7 @@ The engine is plain JavaScript with no dependencies: [`static/lighttable/src/eng
 
 ## On real drawings
 
-We ran Redline on drawings nobody prepared for it: 27 consecutive revision pairs of 7 drawings from 5 SparkFun open-hardware repositories, taken from their GitHub history, with each commit message standing in for the change notes. In the 9 pairs we inspected cloud by cloud, Redline marked 25 content changes (a jumper, a test point, a pin, renamed nets, swapped connectors). **The commit messages describe 3 of them.** The run also taught the engine to set aside re-plot shifts (all 30 it set aside are published side by side, and each reads the same before and after) and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
+We ran Redline on drawings nobody prepared for it: 27 consecutive revision pairs of 7 drawings from 5 SparkFun open-hardware repositories, taken from their GitHub history, with each commit message standing in for the change notes. Redline drew 365 clouds, and we classified every one: 87 are changes to parts, connections, values or notes (a jumper, test points, a regulator block, a resistor value, a USB filter removed, swapped connectors). **The commit messages clearly describe 4 of the 87.** The per-cloud table is published. The run also taught the engine to set aside re-plot shifts (all 30 it set aside are published side by side, and each reads the same before and after) and to measure moves. Details, figures and scripts: [Redline on real drawings](docs/real-world-run.md).
 
 ## Measured on a benchmark
 
@@ -66,7 +68,7 @@ The scripts and the method are in [`bench/`](bench/). Anyone with the NIST drawi
 Install Redline from the link on the Devpost page (Jira Cloud, any site). Then, in about three minutes:
 
 1. Open any work item, select the **Apps** button under its title and choose **Redline**. The panel offers **Add a sample change order**. It attaches revisions C and D of a sample bracket drawing (a public-domain NIST test drawing, edited by us), a phone photo of a marked-up print, and two numbered change notes.
-2. Select **Compare revisions**. The light table finds four changes and two pen markups. Change 1 is declared in note 1, but the drawing says Ø25.6 where the note says Ø25.5. Changes 2 and 3 are in no note at all. The machinist circled change 2 on the print.
+2. Select **Compare revisions**. The light table finds five changes and two pen markups. Change 1 is declared in note 1, but the drawing says Ø25.6 where the note says Ø25.5. Change 2 is in no note; change 3, a hole, moved 3 mm and is in no note either. Change 4 matches note 2 and needs a sign-off. Change 5 is the title block, which still reads Rev C on the Rev D drawing. The machinist circled change 2 on the print.
 3. Decide each one: press **1** or **2** to declare a change against a note, **S** to sign off, or use the buttons. The verdict in the header updates as you go. Close the light table to see the issue panel.
 4. To see the release gate, add the **Redline drawing release gate** validator to a transition (steps in [Set up the release gate](docs/release-gate.md)) and try that transition while changes are open. Jira refuses it with the reason.
 5. Optional: add the **Change orders held by Redline** gadget to a dashboard, search `redlineGate = "blocked"`, or ask the *Drawing change checker* agent in Rovo.

@@ -14,7 +14,9 @@ const MODES = [
   { key: 'a', label: 'Rev A', hint: 'The earlier revision only' },
   { key: 'b', label: 'Rev B', hint: 'The new revision only' },
 ];
-const kindText = (c) => (c.countedBack ? 'Set aside by Redline as a re-plot shift, counted back in by the reviewer' : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
+const kindText = (c) => (c.kind === 'titleBlock' ? `Title block reads Rev ${c.titleBlock.b}; this revision is Rev ${c.titleBlock.expected}`
+  : c.housekeeping === 'revLetter' ? `Revision letter ${c.revLetter.a} to ${c.revLetter.b}, as this revision should read`
+  : c.countedBack ? 'Set aside by Redline as a re-plot shift, counted back in by the reviewer' : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
   : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}` : KIND_TEXT[c.kind]);
 const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed', sheetAdded: 'Whole sheet added in this revision', sheetRemoved: 'Whole sheet removed in this revision' };
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -250,7 +252,7 @@ export default function LightTable() {
         const out = await invoke('saveReview', { baseVersion: versionRef.current, review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
-          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack })),
+          clouds: allClouds.map(({ id, n, zone, kind, sheet: sh, x0, y0, x1, y1, box, before, after, values, move, housekeeping, countedBack, titleBlock, revLetter }) => ({ id, n, zone, kind, sheet: sh || 1, box: box || [x0, y0, x1, y1], before, after, values, move, housekeeping, countedBack, titleBlock, revLetter })),
           sheets: sheetInfo,
           setAside: Object.values(aside).flat().slice(0, 300).map(({ id, sheet: sh, zone, x0, y0, x1, y1, match }) => ({ id, sheet: sh, zone, box: [x0, y0, x1, y1], match })),
           decisions, gate: { status: gate.blocked ? 'blocked' : 'clear', text: gate.text, open: gate.open, unsigned: gate.unsigned, rejected: gate.rejected, markups: gate.markups },
@@ -805,7 +807,7 @@ function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, o
   return (
     <div className="rl-house">
       <button className="rl-house-head" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <span><b>Housekeeping</b> {list.length} {list.length === 1 ? 'difference' : 'differences'}: {list.filter((c) => c.housekeeping === 'stamp').length} plot stamp, {list.filter((c) => c.housekeeping === 'textMove').length} moved labels</span>
+        <span><b>Housekeeping</b> {list.length} {list.length === 1 ? 'difference' : 'differences'}: {[[list.filter((c) => c.housekeeping === 'stamp').length, 'plot stamp', 'plot stamps'], [list.filter((c) => c.housekeeping === 'textMove').length, 'moved label', 'moved labels'], [list.filter((c) => c.housekeeping === 'revLetter').length, 'revision letter', 'revision letters']].filter(([n]) => n).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(', ')}</span>
         <span className="rl-house-state">{unanswered ? `${unanswered} to answer` : 'All answered'}</span>
       </button>
       {todo.length > 0 && !readOnly && (open

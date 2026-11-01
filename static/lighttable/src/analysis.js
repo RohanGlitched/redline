@@ -5,6 +5,7 @@ import { compare, warpGray } from './engine/core.mjs';
 import { readMarkups } from './engine/markup.mjs';
 import { numbersIn } from '../../../shared/gate.mjs';
 import { withHousekeeping } from './engine/housekeeping.mjs';
+import { revisionOfName, titleBlockRevision } from './engine/titleblock.mjs';
 
 export { ENGINE_VERSION } from '../../../shared/review.mjs';
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -221,6 +222,22 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
     .map((c, i) => withHousekeeping({ id: `c${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, added: c.added, removed: c.removed,
       zone: zoneOf(c, A.w, A.h), move: moveOf(c.moved, dpi), ...textOf(c, hA.texts, hB.texts, r.transform, k), sameText: sameTextOf(c, hA.texts, hB.texts, r.transform, k),
       textShare: textShareOf(c, A, Bw, hA.texts, hB.texts, r.transform, k) }));
+  // The title block must name the revision this change order releases. A sheet whose title block still
+  // reads the old letter is a change of its own, answered like any other; a letter that moved on as it
+  // should is housekeeping.
+  const expected = revisionOfName(revB.filename);
+  const tA = titleBlockRevision(hA.texts, hA.w, hA.h), tB = titleBlockRevision(hB.texts, hB.w, hB.h);
+  if (expected && tB && tB.letter !== expected) {
+    // revision B's box, brought back onto revision A's sheet through the registration
+    const [a, b, c, d, e, f] = r.transform, det = a * e - b * d || 1;
+    const back = (x, y) => [(e * (x - c) - b * (y - f)) / det, (-d * (x - c) + a * (y - f)) / det];
+    const p = back(tB.box.x0 / k, tB.box.y0 / k), q = back(tB.box.x1 / k, tB.box.y1 / k);
+    const box = { x0: Math.max(0, Math.round(Math.min(p[0], q[0]) - 6)), y0: Math.max(0, Math.round(Math.min(p[1], q[1]) - 6)), x1: Math.min(A.w - 1, Math.round(Math.max(p[0], q[0]) + 6)), y1: Math.min(A.h - 1, Math.round(Math.max(p[1], q[1]) + 6)) };
+    clouds.push({ id: `c${clouds.length + 1}`, n: clouds.length + 1, ...box, kind: 'titleBlock', zone: zoneOf(box, A.w, A.h), titleBlock: { a: tA?.letter || null, b: tB.letter, expected } });
+  } else if (expected && tB && tA && tA.letter !== tB.letter) {
+    const bx = tB.box, hit = (cl) => cl.x1 >= bx.x0 / k - 4 && cl.x0 <= bx.x1 / k + 4 && cl.y1 >= bx.y0 / k - 4 && cl.y0 <= bx.y1 / k + 4;
+    for (const cl of clouds) if (hit(cl) && !cl.housekeeping && (cl.textShare ?? 0) >= 0.9) { cl.housekeeping = 'revLetter'; cl.revLetter = { a: tA.letter, b: tB.letter }; }
+  }
   // differences the engine set aside as re-plot shifts (line work nudged under ~0.7 mm, matching once
   // shifted): not changes, but listed so a reviewer can see each one and count it back in
   const setAside = (r.rejected || []).filter((c) => c.shiftNcc !== undefined)

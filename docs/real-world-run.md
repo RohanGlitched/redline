@@ -14,25 +14,33 @@ Everything in [the benchmark](../bench/README.md) is built by us: we planted the
 
 Redline drew **365 clouds** over the 27 pairs (118 sheet pairs). Three pairs produced none, and in all three the commit message describes a change that is not on the schematic (a 3D model, PCB silk, a file rename).
 
-To check what the clouds mean, we inspected every cloud in 9 pairs (60 clouds, counted before the re-plot shift check, which now sets 5 of them aside) at full zoom, before and after side by side:
+To check what the clouds mean, we classified **every one of the 365** from before-and-after crops of each (`bench/real/cloud_sheets.py` draws them; the result, one row per cloud with what changed and whether the commit message says so, is [`real-world/clouds.csv`](real-world/clouds.csv)):
 
 | What the cloud marks | Clouds |
 |---|---|
-| A content change: a part, jumper, test point or pin added, a net or reference renamed, a note added or reworded, a value changed | 25 |
-| Content laid out again: blocks and labels moved, otherwise the same | 18 |
-| Plot stamp from re-exporting: date, time, file path, KiCad version | 10 |
-| A frame or dashed box redrawn | 2 |
-| No real difference: line work nudged by a pixel in a re-export | 5 |
+| A content change | **195** |
+| of which: a part, connection, value or note changed (a jumper, test point, connector pin, regulator block, net renamed, resistor value) | 87 |
+| of which: rating text a symbol-library refresh added to parts ("25V 20%") | 55 |
+| of which: a net label's drawn shape (signal direction) or a no-connect mark | 53 |
+| Content laid out again: blocks and labels moved, otherwise the same | 98 |
+| A frame or title-block line redrawn or retitled | 25 |
+| Plot stamp from re-exporting: date, time, file path, KiCad version | 25 |
+| No real difference | 7 |
+| Could not tell from the crop (mostly one sheet re-plotted with a new layout) | 15 |
 
-**Of the 25 content changes, the commit message describes 3.** The other 22 sit under messages such as "Routed", "Updates after review", "Final tweaks" or "Update to latest SparkFun KiCad Libraries". Some are exactly the kind of change Redline exists to catch:
+**Of the 87 changes to parts, connections, values or notes, the commit messages clearly describe 4.** 48 are clearly not in their message, and for 35 the message is too vague to tell ("Final tweaks", "Updates after review", "Update to latest SparkFun KiCad Libraries"). Some are exactly the kind of change Redline exists to catch:
 
 - under "Add mounting holes for SiT5811 / Rakon oscillator": a new jumper **JP1** in series with the log button, a new test point **TP1** on the 3.3 V rail, and diode references D9 and D10 swapped (figure above);
-- under "Updates after proto review": connectors **J5 and J13 trade places**, connector J4 gains a 19th pin, VBATT is renamed **VBACKUP**, and the antenna grounds are isolated (figure below);
-- under "Updates after review" on the IM19 board: a jumper relabelled from "Measure JP1" to "MEAS", a net renamed from CH342_EN.1 to CH342_EN, and a new design note on the locking JST connector.
+- under "Update logo symbol and footprint": a new **3.3 V analog regulator block** (U25 with its capacitors and a test point), and **R8, the resistor the board reads to tell which oscillator is fitted, changed from 1k to 2k**;
+- under "Change KiCad file name to SparkPNT_GPSDO": **seven new test points** on the J9 screw terminal;
+- under "Routed and panelized": connector J13 reassigned from a UART with flow control to UART plus I²C, and the **common-mode filter removed from the USB data lines**;
+- under "Updates after proto review": connectors **J5 and J13 trade places**, connector J4 gains a 19th pin, VBATT is renamed **VBACKUP** (figure below).
 
 ![Connectors J5 and J13 swap places under a commit message that says "Updates after proto review"](real-world/flex-connectors-swapped.png)
 
 This is not a criticism of SparkFun's engineers: these are working commits in an open design, not released change orders, and commit messages are not meant to be complete. It shows how easily a revision carries more than its notes say, which is the gap a release gate has to close.
+
+How to read these numbers: the GNSSDO Plus drawing shares sheets with the GNSSDO, so some changes appear twice, once in each history; the classification is our own reading of each crop, published cloud by cloud so anyone can check it; and a commit message is a weaker record than a change order, which is why we report only what it clearly does or does not say.
 
 ## What the real drawings taught us
 
