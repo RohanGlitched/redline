@@ -39,8 +39,8 @@ dd { margin: 0; font-size: 15px; color: #44546f; }
   <p class="lede">Compares two revisions of an engineering drawing inside Jira, clouds every change, and holds the release until each one is declared and signed off.</p>
   <dl>
     <dt>431/432</dt><dd>planted edits found on NIST test drawings</dd>
-    <dt>0</dt><dd>false clouds on unchanged sheets</dd>
-    <dt>0.4 s</dt><dd>a sheet, compared in the browser</dd>
+    <dt>0</dt><dd>false clouds on unchanged digital sheets</dd>
+    <dt>22/25</dt><dd>real changes on open-hardware schematics missing from their commit message</dd>
   </dl>
 </div>
 <div class="foot">A Forge app for Jira</div>
@@ -65,8 +65,8 @@ function cloudPath(x0, y0, x1, y1, pad, bump) {
 // clouds found by the shipped engine on BRKT-0142 rev C to rev D (docs/cover/clouds.mjs)
 const clouds = [{"x0":1210,"y0":553,"x1":1293,"y1":597},{"x0":1030,"y0":635,"x1":1082,"y1":668},{"x0":796,"y0":882,"x1":851,"y1":913},{"x0":93,"y0":1131,"x1":339,"y1":1141}];
 const ns = 'http://www.w3.org/2000/svg', s = document.getElementById('s');
-// 1 and 4 are declared in the sample's change notes (blue); 2 and 3 are the undeclared ones (red)
-const declared = new Set([0, 3]);
+// 4 is declared and matches its note (blue); 1 shows a value its note does not state, 2 and 3 are in no note (red)
+const declared = new Set([3]); // 1 is declared but its value (25.6) is not what note 1 says, so it stays red
 clouds.forEach((c, i) => {
   const w = document.createElementNS(ns, 'g'); if (declared.has(i)) w.setAttribute('class', 'decl'); s.appendChild(w);
   const p = document.createElementNS(ns, 'path'); p.setAttribute('d', cloudPath(c.x0, c.y0, c.x1, c.y1, 16, 13)); p.setAttribute('class', 'cloud'); w.appendChild(p);
