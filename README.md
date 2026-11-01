@@ -55,7 +55,7 @@ On 352 revision pairs we built from public-domain NIST test drawings, with edits
 
 | | Result |
 |---|---|
-| Digital revisions | 431 of 432 visible edits found, no false clouds on unchanged sheets, about 0.4 s a sheet |
+| Digital revisions | 431 of 432 visible edits found, no false clouds on unchanged sheets, 0.01 false clouds a sheet overall, about 0.3 s a sheet |
 | Simulated rescans of revision B (rotated, scaled, blurred, noisy, JPEG) | 396 of 432 edits found (91.7%), 2.7 false clouds a sheet |
 | Simulated phone photos of marked-up prints (60 photos, 160 pen marks) | 160 of 160 marks found, no false marks |
 

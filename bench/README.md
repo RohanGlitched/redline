@@ -33,7 +33,7 @@ It records the box of every edit, then renders revision A and revision B at 150 
 
 | Test | Result |
 |---|---|
-| Digital revisions, 352 pairs, 432 visible edits | 99.8% of edits found (431 of 432), no false clouds on unchanged sheets, 0.11 false clouds per sheet overall, about 0.4 s per sheet |
+| Digital revisions, 352 pairs, 432 visible edits | 99.8% of edits found (431 of 432), no false clouds on unchanged sheets, 0.01 false clouds per sheet overall (0.11 before the re-plot shift check), about 0.3 s per sheet |
 | Rescanned revision B, same 352 pairs | 91.7% of edits found (396 of 432), 2.7 false clouds per sheet |
 | Photographed prints, 60 photos, 160 pen marks | 160 of 160 marks found, no false marks, sheet found in all 60 photos, about 0.3 s per photo |
 | Registration on rescans | median rotation error under 0.01° |
