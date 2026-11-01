@@ -34,9 +34,9 @@ To check what the clouds mean, we classified **every one of the 365** from befor
 - under "Update logo symbol and footprint": a new **3.3 V analog regulator block** (U25 with its capacitors and a test point), and **R8, the resistor the board reads to tell which oscillator is fitted, changed from 1k to 2k**;
 - under "Change KiCad file name to SparkPNT_GPSDO": **seven new test points** on the J9 screw terminal;
 - under "Routed and panelized": connector J13 reassigned from a UART with flow control to UART plus I²C, and the **common-mode filter removed from the USB data lines**;
-- under "Updates after proto review": connectors **J5 and J13 trade places**, connector J4 gains a 19th pin, VBATT is renamed **VBACKUP** (figure below).
+- under "Updates after proto review": connector **J4 gains a 19th pin** tied to ground and VBATT is renamed **VBACKUP**; on the same sheet connectors J5 and J13 trade places, a layout move rather than a part change, so it is not among the 87 (figure below).
 
-![Connectors J5 and J13 swap places under a commit message that says "Updates after proto review"](real-world/flex-connectors-swapped.png)
+![Connectors J5 and J13 swap places on the sheet (a layout move, not counted among the 87) under a commit message that says "Updates after proto review"](real-world/flex-connectors-swapped.png)
 
 This is not a criticism of SparkFun's engineers: these are working commits in an open design, not released change orders, and commit messages are not meant to be complete. It shows how easily a revision carries more than its notes say, which is the gap a release gate has to close.
 

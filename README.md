@@ -36,7 +36,7 @@ The ledger lists each change with before-and-after crops; a change whose content
 
 **Release gate.** A workflow validator that refuses the release transition until the review is complete. It reads the review from Redline's own app storage rather than from an issue property, re-checks that the review covers the two newest PDFs, and fails closed if Jira cannot say what is attached. See [Set up the release gate](docs/release-gate.md).
 
-**Search and Rovo.** `redlineGate = "blocked"` in JQL finds blocked change orders. The *Drawing change checker* Rovo agent answers questions such as *"What changed on ENG-4, and is it declared?"*
+**Search and Rovo.** `redlineGate = "blocked"` in JQL finds blocked change orders. The *Drawing change checker* Rovo agent answers questions such as *"What changed on ENG-5, and is it declared?"*
 
 ## How the comparison works
 
@@ -62,9 +62,9 @@ On 352 revision pairs we built from public-domain NIST test drawings, with edits
 |---|---|
 | Digital revisions | 431 of 432 visible edits found, no false clouds on unchanged sheets, 0.01 false clouds a sheet overall, about 0.3 s a sheet |
 | Simulated rescans of revision B (rotated, scaled, blurred, noisy, JPEG) | 398 of 432 edits found (92.1%), about 1 false cloud a sheet |
-| Simulated phone photos of marked-up prints (60 photos, 160 pen marks) | 160 of 160 marks found, no false marks |
+| Simulated phone photos of marked-up prints (60 photos, 160 pen marks) | 160 of 160 marks found, no false marks, about 0.7 s a photo |
 
-The scripts and the method are in [`bench/`](bench/). Anyone with the NIST drawings can run them again.
+The benchmark measures the pixel comparison and the markup reader; the text-layer, title-block and housekeeping checks are covered by unit tests. The scripts, the method and the raw results are in [`bench/`](bench/). Anyone with the NIST drawings can run them again.
 
 ## For judges
 

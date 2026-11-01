@@ -131,10 +131,12 @@ function Thumb({ t, clouds, decisions, notes, label, onOpen }) {
         <svg viewBox={`0 0 ${t.w} ${t.h}`} aria-hidden="true">
           {clouds.map((c, i) => {
             const [x0, y0, x1, y1] = c.box;
+            // the number tag stays inside the print, even for a change at its edge
+            const tx = Math.min(x1 + 16 * k, t.w - 24 * k), ty = Math.max(y0 - 14 * k, 24 * k);
             return (
               <g key={c.id} className={`tc ${shownStatus(c, decisions[c.id] || {}, notes)}`} style={{ '--i': i }}>
                 <path d={cloudPath(x0, y0, x1, y1, 14 * k, 12 * k)} strokeWidth={3 * k} pathLength="1" />
-                <g transform={`translate(${x1 + 16 * k} ${y0 - 14 * k}) scale(${k * 1.5})`}>
+                <g transform={`translate(${tx} ${ty}) scale(${k * 1.5})`}>
                   <path d="M0,-15 L15,11 L-15,11 Z" />
                   <text y="6" textAnchor="middle">{c.n}</text>
                 </g>

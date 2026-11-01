@@ -2,6 +2,8 @@
 
 These scripts measure the comparison engine that ships in the app (`static/lighttable/src/engine/`). Nothing is copied or tuned separately, so a change to the engine shows up here first.
 
+What they cover: the pixel comparison (`compare()` in `core.mjs`: registration, the diff, clouds and the re-plot shift check) and the markup reader (`readMarkups()`). The steps the light table adds on top in the browser, comparing the drawings' text layers, the title-block revision check and grouping housekeeping, need a PDF's text and are covered by the unit tests in `test/gate.test.mjs` instead, so they neither add to nor take from these numbers.
+
 ## What is measured
 
 **Drawing revisions.** `gen.py` takes the public-domain NIST MBE PMI test drawings (the combined, fully-toleranced and atomic test cases: 88 vector pages) and plants 1 to 3 edits in each copy at the PDF level:
@@ -33,12 +35,12 @@ It records the box of every edit, then renders revision A and revision B at 150 
 
 | Test | Result |
 |---|---|
-| Digital revisions, 352 pairs, 432 visible edits | 99.8% of edits found (431 of 432), no false clouds on unchanged sheets, 0.01 false clouds per sheet overall (0.11 before the re-plot shift check), about 0.3 s per sheet |
+| Digital revisions, 352 pairs, 432 visible edits | 99.8% of edits found (431 of 432), no false clouds on unchanged sheets, 0.01 false clouds per sheet overall, about 0.3 s per sheet |
 | Rescanned revision B, same 352 pairs | 92.1% of edits found (398 of 432), 1.0 false clouds per sheet (1.1 on unchanged sheets) |
-| Photographed prints, 60 photos, 160 pen marks | 160 of 160 marks found, no false marks, sheet found in all 60 photos, about 0.3 s per photo |
+| Photographed prints, 60 photos, 160 pen marks | 160 of 160 marks found (circles, clouds, arrows, strike-throughs, handwritten values), no false marks, sheet found in all 60 photos, about 0.7 s per photo |
 | Registration on rescans | median rotation error under 0.01° |
 
-The latest outputs are kept in [`results/`](results/) (`digital.json`, `rescanned.json`): the engine called with exactly the options the app passes at 150 dpi.
+The latest outputs are kept in [`results/`](results/) (`digital.json`, `rescanned.json`, `markup.json`): the engine called with exactly the options the app passes at 150 dpi.
 
 ## Run it
 

@@ -12,10 +12,10 @@ sheet = (sheet.astype(np.float32) / 255 * np.array([238, 245, 250])).astype(np.u
 s = 200 / 72  # points -> px
 pen, th = (38, 36, 196), 4
 def pts(a): return (np.array(a) * s).astype(np.int32)
-# ring around a hole near zone C4 (a question about the hole the drafter moved)
+# ring around a hole in zone C3 (a question about the hole the drafter moved)
 c = (509 * s, 316 * s); cv2.ellipse(sheet, (int(c[0]), int(c[1])), (int(22 * s), int(16 * s)), -12, 10, 350, pen, th, cv2.LINE_AA)
 cv2.putText(sheet, 'CHECK POS?', (int(528 * s), int(296 * s)), cv2.FONT_HERSHEY_SCRIPT_SIMPLEX, 2.2, pen, th, cv2.LINE_AA)
-# "R3 MAX" with an arrow to a fillet in zone B6
+# "R3 MAX" with an arrow to a fillet in zone D7
 cv2.arrowedLine(sheet, (int(118 * s), int(268 * s)), (int(146 * s), int(240 * s)), pen, th, cv2.LINE_AA, tipLength=0.2)
 cv2.putText(sheet, 'R3 MAX', (int(62 * s), int(292 * s)), cv2.FONT_HERSHEY_SCRIPT_SIMPLEX, 2.4, pen, th, cv2.LINE_AA)
 H, W = sheet.shape[:2]
