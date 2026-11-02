@@ -2,10 +2,10 @@
  "totals": {
   "pairs": 27,
   "sheet_pairs": 118,
-  "clouds": 365,
-  "set_aside": 30,
-  "moved": 72,
-  "clouds_before_shift_check": 395,
+  "clouds": 321,
+  "set_aside": 20,
+  "moved": 52,
+  "clouds_before_shift_check": 341,
   "first_date": "2023-12-13",
   "last_date": "2025-11-12"
  },
@@ -19,7 +19,7 @@
    "after_date": "2024-10-18",
    "commit_message": "Updates for v1.0 PCB",
    "sheet_pairs": 7,
-   "clouds": 2,
+   "clouds": 29,
    "set_aside": 0,
    "measured_moves": 0
   },
@@ -32,9 +32,9 @@
    "after_date": "2024-10-19",
    "commit_message": "Update logo symbol and footprint",
    "sheet_pairs": 7,
-   "clouds": 11,
+   "clouds": 31,
    "set_aside": 0,
-   "measured_moves": 0
+   "measured_moves": 1
   },
   {
    "repository": "SparkFun_GNSSDO",
@@ -45,9 +45,9 @@
    "after_date": "2024-10-21",
    "commit_message": "Add jumpers for 2.8V and 1.8V In / Out",
    "sheet_pairs": 7,
-   "clouds": 50,
+   "clouds": 5,
    "set_aside": 0,
-   "measured_moves": 2
+   "measured_moves": 1
   },
   {
    "repository": "SparkFun_GNSSDO",
@@ -58,9 +58,9 @@
    "after_date": "2024-10-23",
    "commit_message": "Add mounting holes for SiT5811 / Rakon oscillator",
    "sheet_pairs": 7,
-   "clouds": 20,
+   "clouds": 6,
    "set_aside": 0,
-   "measured_moves": 8
+   "measured_moves": 0
   },
   {
    "repository": "SparkFun_GNSSDO",
@@ -71,7 +71,7 @@
    "after_date": "2024-10-24",
    "commit_message": "Change KiCad file name to SparkPNT_GPSDO",
    "sheet_pairs": 7,
-   "clouds": 4,
+   "clouds": 9,
    "set_aside": 0,
    "measured_moves": 0
   },
@@ -84,9 +84,9 @@
    "after_date": "2024-11-08",
    "commit_message": "Final tweaks",
    "sheet_pairs": 7,
-   "clouds": 41,
-   "set_aside": 10,
-   "measured_moves": 12
+   "clouds": 4,
+   "set_aside": 0,
+   "measured_moves": 0
   },
   {
    "repository": "SparkFun_GNSSDO",
@@ -361,5 +361,6 @@
    "set_aside": 4,
    "measured_moves": 9
   }
- ]
+ ],
+ "correction": "Nov 2 2026: the first run named each revision pair by file name only, so the GNSSDO main-board schematic and the GNSSDO Plus schematic (both Schematic.pdf) shared image folders and the main board was compared using GNSSDO Plus images. The main board is now compared from its own revisions; see docs/real-world-run.md."
 }

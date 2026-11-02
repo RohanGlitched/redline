@@ -4,7 +4,8 @@ jobs = []
 for d in vs:
     v = d['versions']
     for a, b in zip(v, v[1:]):
-        name = f"{d['repo']}__{os.path.basename(d['path'])[:-4]}__{a['i']:02d}-{b['i']:02d}"
+        # the whole path, not just the file name: two drawings in one repository can share a file name
+        name = f"{d['repo']}__{d['path'][:-4].replace('/', '_')}__{a['i']:02d}-{b['i']:02d}"
         os.makedirs(f'pairs/{name}', exist_ok=True)
         A, B = pymupdf.open(a['file']), pymupdf.open(b['file'])
         pages = []

@@ -132,10 +132,47 @@ export default function Panel() {
           ) : <p className="rl-panel-none">No differences between the revisions.</p>}
         </div>
       )}
+      <SignRule o={o} onSaved={load} />
       {r?.savedAt && (
         <p className="rl-panel-foot">
           Last saved{o.savedBy ? ` by ${o.savedBy}` : ''} {ago(r.savedAt)}{multi ? `. ${r.sheets.done?.length || 0} of ${r.sheets.count} sheets compared.` : '.'}
         </p>
+      )}
+    </div>
+  );
+}
+
+// Who may sign off this project's change orders, and for a project administrator, the place to change it.
+function SignRule({ o, onSaved }) {
+  const [edit, setEdit] = useState(false), [group, setGroup] = useState(''), [notUp, setNotUp] = useState(false);
+  const [busy, setBusy] = useState(false), [err, setErr] = useState(null);
+  const rule = o.signRule;
+  const parts = [rule?.group && `only members of ${rule.group} can sign off`, rule?.notUploader && 'the person who attaches a revision cannot sign off its changes'].filter(Boolean);
+  const text = parts.length ? cap(parts.join(', and ')) + '.' : 'Anyone who can edit this work item can sign off.';
+  async function save(e) {
+    e.preventDefault(); setBusy(true); setErr(null);
+    try {
+      const out = await invoke('setSignRule', { group, notUploader: notUp });
+      if (!out?.ok) { setErr(out?.error || 'Not saved.'); return; }
+      setEdit(false); onSaved();
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="rl-panel-sign">
+      <p>{text}{o.canSign === false && o.cannotSignWhy ? <b className="warn"> {o.cannotSignWhy}</b> : null}
+        {o.canAdmin && !edit && <> <button className="link" onClick={() => { setGroup(rule?.group || ''); setNotUp(!!rule?.notUploader); setEdit(true); }}>Change who signs off</button></>}</p>
+      {edit && (
+        <form onSubmit={save}>
+          <label>Jira group whose members sign off (leave empty for anyone who can edit)
+            <input value={group} maxLength={255} placeholder="for example quality-engineers" onChange={(e) => setGroup(e.target.value)} />
+          </label>
+          <label className="chk"><input type="checkbox" checked={notUp} onChange={(e) => setNotUp(e.target.checked)} /> The person who attaches a revision cannot sign off its changes</label>
+          <div className="row">
+            <button className="rl-btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save for this project'}</button>
+            <button type="button" className="rl-btn" onClick={() => { setEdit(false); setErr(null); }}>Cancel</button>
+          </div>
+          {err && <p className="err">{err}</p>}
+        </form>
       )}
     </div>
   );

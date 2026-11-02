@@ -130,9 +130,12 @@ export function readMarkups(photo, ref, opts = {}) {
   const redNear = dilate(refRed, w, h, tol);
   let count = 0;
   for (let j = 0; j < pen.length; j++) { if (redNear[j]) pen[j] = 0; count += pen[j]; }
-  const marks = mergeBoxes(blobs(pen, w, h).filter((b) => b.n >= (opts.minPx ?? 25)), opts.gap ?? 48)
+  const raw = blobs(pen, w, h).filter((b) => b.n >= (opts.minPx ?? 25));
+  // each mark keeps its pen strokes, so a loop drawn round a feature can say which change it points at
+  const marks = mergeBoxes(raw, opts.gap ?? 48)
     .filter((b) => b.n >= (opts.minMark ?? 60))
-    .map((b, i) => ({ id: `m${i + 1}`, n: i + 1, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, px: b.n }));
+    .map((b, i) => ({ id: `m${i + 1}`, n: i + 1, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, px: b.n,
+      parts: raw.filter((r) => r.x0 >= b.x0 && r.x1 <= b.x1 && r.y0 >= b.y0 && r.y1 <= b.y1).map((r) => [r.x0, r.y0, r.x1, r.y1, r.n]) }));
   return { marks, corners, transform: p, warped, penPixels: count, ms: Date.now() - t0 };
 }
 
@@ -174,4 +177,17 @@ function mergeBoxes(bs, gap) {
     }
   }
   return out;
+}
+
+// The change a pen mark points at: one its pen loop encloses first (a ring drawn round a feature), else the one its
+// strokes overlap most, else none.
+export function markTarget(m, clouds) {
+  const touching = clouds.filter((c) => c.x0 <= m.x1 && m.x0 <= c.x1 && c.y0 <= m.y1 && m.y0 <= c.y1);
+  if (!touching.length) return null;
+  const ring = (p) => { const w = p[2] - p[0], h = p[3] - p[1]; return w > 12 && h > 12 && p[4] / (w * h) < 0.35; };
+  const inside = (c, p) => { const x = (c.x0 + c.x1) / 2, y = (c.y0 + c.y1) / 2; return x >= p[0] && x <= p[2] && y >= p[1] && y <= p[3]; };
+  const enclosed = touching.filter((c) => (m.parts || []).some((p) => ring(p) && inside(c, p)));
+  if (enclosed.length) return enclosed[0];
+  const over = (c) => Math.max(0, Math.min(c.x1, m.x1) - Math.max(c.x0, m.x0)) * Math.max(0, Math.min(c.y1, m.y1) - Math.max(c.y0, m.y0)) / Math.max(1, (c.x1 - c.x0) * (c.y1 - c.y0));
+  return touching.reduce((a, c) => (over(c) > over(a) ? c : a));
 }

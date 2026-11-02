@@ -36,7 +36,7 @@ export async function loadChangeOrder(key) {
   const issue = await res.json();
   const review = (await kvs.get(reviewKey(issue.id))) || null;
   const pick = drawingPdfs(issue.fields.attachment);
-  const attachments = pick.pdfs.map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, author: a.author?.displayName }));
+  const attachments = pick.pdfs.map((a) => ({ id: +a.id, filename: a.filename, size: a.size, created: a.created, author: a.author?.displayName, authorId: a.author?.accountId }));
   const images = (issue.fields.attachment || [])
     .filter((a) => /^image\/(jpeg|png|webp|heic|heif)$/.test(a.mimeType))
     .sort((x, y) => Date.parse(x.created) - Date.parse(y.created) || +x.id - +y.id)
@@ -45,6 +45,7 @@ export async function loadChangeOrder(key) {
     key: issue.key,
     id: issue.id,
     project: issue.fields.project?.key,
+    projectId: issue.fields.project?.id,
     issuetype: issue.fields.issuetype?.id,
     images,
     summary: issue.fields.summary,
@@ -86,6 +87,11 @@ resolver.define('getChangeOrder', async (req) => {
   const o = await loadChangeOrder(issueKey(req));
   const me = await (await jira(route`/rest/api/3/myself`)).json();
   const out = { ...o, user: { accountId: me.accountId, displayName: me.displayName }, canEdit: await canEdit(o.key) };
+  // who may sign off here, and whether this person may change that (project administrators)
+  const newest = o.attachments.find((a) => a.id === o.pair[1]);
+  const may = await signCheck(o.projectId, me, { author: { accountId: newest?.authorId } });
+  out.signRule = may.rule; out.canSign = may.ok; out.cannotSignWhy = may.why || null;
+  out.canAdmin = await isProjectAdmin(o.project);
   const r = o.review;
   // the issue panel also shows who saved the review last and a small picture of each compared sheet
   if (req.payload?.withThumbs && r) {
@@ -141,6 +147,44 @@ resolver.define('getAttachment', async (req) => {
 // recomputes the gate itself and records who signed each change.
 // The review is kept in app storage, which the app writes with its own rights, so the user's right to
 // edit the work item is checked first: someone who can only view it can read the review but not sign it.
+// Who may sign off a project's change orders: anyone who can edit the work item, unless a project administrator has
+// limited it to a Jira group, kept the person who attached a revision from signing off its changes, or both.
+const signRuleKey = (projectId) => `signers:${projectId}`;
+export async function signCheck(projectId, me, newestPdf) {
+  const rule = projectId ? await kvs.get(signRuleKey(projectId)).catch(() => null) : null;
+  if (!rule || (!rule.group && !rule.notUploader)) return { ok: true, rule: null };
+  if (rule.group) {
+    const u = await (await jira(route`/rest/api/3/myself?expand=groups`)).json();
+    if (!(u.groups?.items || []).some((g) => g.name === rule.group)) return { ok: false, rule, why: `Only members of ${rule.group} can sign off this project's change orders.` };
+  }
+  if (rule.notUploader && newestPdf?.author?.accountId && newestPdf.author.accountId === me.accountId) return { ok: false, rule, why: 'You attached this revision, so someone else signs off its changes.' };
+  return { ok: true, rule };
+}
+
+async function isProjectAdmin(projectKey) {
+  if (!projectKey) return false;
+  // a project administrator, or a Jira administrator (who administers every project)
+  const res = await jira(route`/rest/api/3/mypermissions?projectKey=${projectKey}&permissions=ADMINISTER_PROJECTS,ADMINISTER`);
+  const p = (await res.json().catch(() => null))?.permissions || {};
+  return !!(p.ADMINISTER_PROJECTS?.havePermission || p.ADMINISTER?.havePermission);
+}
+
+resolver.define('setSignRule', async (req) => {
+  const ires = await jira(route`/rest/api/3/issue/${issueKey(req)}?fields=project`);
+  if (!ires.ok) return { ok: false, error: 'This work item was not found or you cannot see it.' };
+  const project = (await ires.json()).fields?.project;
+  if (!(await isProjectAdmin(project?.key))) return { ok: false, error: 'Only a project administrator can change who signs off.' };
+  const group = String(req.payload?.group || '').trim().slice(0, 255) || null;
+  if (group) {
+    const g = await (await jira(route`/rest/api/3/group/bulk?groupName=${group}`)).json().catch(() => null);
+    if (!g?.values?.some((x) => x.name === group)) return { ok: false, error: `There is no Jira group called "${group}".` };
+  }
+  const me = await (await jira(route`/rest/api/3/myself`)).json();
+  const rule = { group, notUploader: !!req.payload?.notUploader, by: me.displayName, byId: me.accountId, at: new Date().toISOString() };
+  await kvs.set(signRuleKey(project.id), rule);
+  return { ok: true, rule };
+});
+
 async function canEdit(key) {
   const res = await jira(route`/rest/api/3/mypermissions?issueKey=${key}&permissions=EDIT_ISSUES`);
   if (!res.ok) return false;
@@ -150,7 +194,7 @@ async function canEdit(key) {
 resolver.define('saveReview', async (req) => {
   const key = issueKey(req);
   if (!(await canEdit(key))) return { readOnly: true };
-  const ires = await jira(route`/rest/api/3/issue/${key}?fields=summary,description,attachment`);
+  const ires = await jira(route`/rest/api/3/issue/${key}?fields=summary,description,attachment,project`);
   if (ires.status === 404) return { stale: true, error: `${key} was not found or you cannot see it any more.` };
   const issue = await ires.json();
   const notes = notesFromAdf(issue.fields.description);
@@ -183,7 +227,10 @@ resolver.define('saveReview', async (req) => {
   // Signatures are never taken from the browser's copy of a decision (shared/review.mjs settleSignatures)
   const asideTotal = (r.setAside || []).length + (sameRevs && !reread ? (stored.setAside || []).filter((a) => !(r.setAside || []).some((b) => b.id === a.id)).length : 0);
   const staleNotes = [];
-  signed.push(...settleSignatures(r.decisions || {}, { beforeOf, notes, signed: req.payload.signed, confirmed: req.payload.confirmed, shown: req.payload.shown || {}, me, now, asideTotal, stale: staleNotes }));
+  // a project can limit who signs off; a refused signer's save still records every other answer
+  const may = await signCheck(issue.fields.project?.id, me, newB);
+  const asked = (req.payload.signed || []).length + (req.payload.confirmed || []).length;
+  signed.push(...settleSignatures(r.decisions || {}, { beforeOf, notes, signed: may.ok ? req.payload.signed : [], confirmed: may.ok ? req.payload.confirmed : [], shown: req.payload.shown || {}, me, now, asideTotal, stale: staleNotes }));
   // For the same pair of revisions, a save can add changes and compared sheets but never drop ones that
   // an earlier comparison found, and what was found about a change (its box, text and values) stays as
   // first recorded, so a review cannot be emptied or softened after the fact.
@@ -306,7 +353,7 @@ resolver.define('saveReview', async (req) => {
     body: JSON.stringify({ gate: { status: verdict.blocked ? 'blocked' : 'clear', text: verdict.text, open: verdict.open || 0 }, revB: r.revB, version: review.version }),
   });
   } catch (e) { console.warn('redline: review saved, search copy not written'); }
-  return { ok: true, version: review.version, gate: verdict, decisions: review.decisions, staleNotes };
+  return { ok: true, version: review.version, gate: verdict, decisions: review.decisions, staleNotes, ...(!may.ok && asked ? { signRefused: may.why } : {}) };
 });
 
 async function attach(key, name, mime, base64) {

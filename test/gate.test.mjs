@@ -542,3 +542,16 @@ test('earlier markups: kept by place under a free id, answers only where every e
   assert.deepEqual(u.marks.map((m) => m.id), ['p9-1', 'p9-1-2']);
   assert.equal(u.markDecisions['p9-1-2'].status, 'open');
 });
+
+import { markTarget } from '../static/lighttable/src/engine/markup.mjs';
+
+test('a pen loop drawn round a feature points at that change, not a nearer one its words reach', () => {
+  const clouds = [{ n: 1, x0: 700, y0: 360, x1: 740, y1: 395 }, { n: 2, x0: 635, y0: 392, x1: 662, y1: 418 }];
+  // a ring round change 2, and the words "CHECK POS?" running right over change 1
+  const m = { x0: 615, y0: 360, x1: 790, y1: 432, parts: [[615, 380, 682, 432, 420], [690, 360, 790, 400, 1600]] };
+  assert.equal(markTarget(m, clouds).n, 2);
+  // no loop: the change the strokes cover most
+  assert.equal(markTarget({ ...m, parts: [[690, 360, 790, 400, 1600]] }, clouds).n, 1);
+  // touching nothing: no suggestion
+  assert.equal(markTarget({ x0: 10, y0: 10, x1: 40, y1: 40, parts: [] }, clouds), null);
+});

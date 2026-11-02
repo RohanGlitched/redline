@@ -5,6 +5,7 @@ import { invoke, closeModal, getFocus, openInNewTab } from './bridge.js';
 import { matchChanges, overlap, carriedChanges, notesDoneBefore } from '../../../shared/review.mjs';
 import { revisionOfName } from './engine/titleblock.mjs';
 import { meaningOf } from './engine/meaning.mjs';
+import { markTarget } from './engine/markup.mjs';
 import { analyse, noteSheet, composite, grayToImage, ENGINE_VERSION, ZONE_COLS, ZONE_ROWS, loadPhoto, readPrint, photoForUpload, quadMatrix } from './analysis.js';
 import { cloudPath } from './cloud.js';
 import { gateOf, valueSlip, noteSlip, slipOf, noteKey, valueOkFor, revLabel } from '../../../shared/gate.mjs';
@@ -22,7 +23,7 @@ const kindText = (c) => (c.kind === 'titleBlock' ? `Title block reads Rev ${c.ti
   // a change found only in the drawing's text says what happened to the words (they are shown under it)
   : c.textOnly && c.housekeeping !== 'stamp' ? `${c.after && !c.before ? 'Text added' : c.before && !c.after ? 'Text removed' : 'Text changed'} (too small a change to show in the line work)`
   : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
-  : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}`
+  : c.move ? `Moved ${c.move.mm} mm on the sheet${c.move.dir ? `, ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}`
   // line work that came or went with words keeps saying it is line work: a new hole with its callout is not "text"
   : c.kind === 'added' && c.after && !c.before ? 'New line work, with new text' : c.kind === 'removed' && c.before && !c.after ? 'Line work removed, with its text'
   : KIND_TEXT[c.kind]);
@@ -112,6 +113,7 @@ export default function LightTable() {
       try {
         const o = await invoke('getChangeOrder');
         setOrder(o);
+        if (o.canSign === false && o.cannotSignWhy) setSaved(`${o.cannotSignWhy} You can still declare, answer and send back.`);
         const pdfs = o.attachments;
         if (o.drawingConflict) { setError(`${o.drawingConflict} different drawings are attached with revisions. Redline compares one drawing per change order: move each drawing's revisions to its own change order.`); return; }
         if (pdfs.length < 2) { setError('Attach two PDF revisions of the drawing to this work item, named by revision (BRKT-0142_rev-C.pdf, BRKT-0142_rev-D.pdf).'); return; }
@@ -399,6 +401,7 @@ export default function LightTable() {
         for (const [id, v] of sentSigned) if (signedNow.current.get(id)?.at === v.at) signedNow.current.delete(id);
         for (const [id, v] of sentConfirmed) if (confirmedNow.current.get(id)?.at === v.at) confirmedNow.current.delete(id);
         // a note rewritten since this light table opened: those signatures were not taken, and the reviewer is told
+        if (out?.signRefused) setSaved(`${out.signRefused} Your other answers were saved.`);
         if (out?.staleNotes?.length) setSaved(`Note ${out.staleNotes.join(', ')} changed since you opened the light table, so ${out.staleNotes.length === 1 ? 'that signature was' : 'those signatures were'} not saved. Close and open it again to read the new words.`);
         // the server's word on every signature: stamped, kept, or dropped (a rewritten note, a re-read), unless the
         // reviewer has signed or changed that decision again since this save left
@@ -912,7 +915,7 @@ function PrintSection({ order, res, print, marks, markDecisions, sel, onSelect, 
                     <>
                       <p className="st warn">Needs an answer{d.error ? `: ${d.error}` : ''}</p>
                       {(() => {
-                        const hit = res.clouds.find((c) => c.x0 <= m.x1 && m.x0 <= c.x1 && c.y0 <= m.y1 && m.y0 <= c.y1);
+                        const hit = markTarget(m, res.clouds);
                         return hit && <p className="suggest">Drawn on change {hit.n}. <button className="link" onClick={() => onDecideMark(m.id, { status: 'covered', cloud: hit.n })}>Mark as covered by change {hit.n}</button></p>;
                       })()}
                       <div className="rl-choices">
@@ -1137,7 +1140,7 @@ function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, o
   );
 }
 
-// What a change note for this change would say, from what Redline read: "Zone C3: moved 3 mm right and down".
+// What a change note for this change would say, from what Redline read: "Zone C3: moved 3 mm on the sheet, right and down".
 const draftNote = (c, multi = false) => {
   if (c.kind?.startsWith('sheet')) return `Sheet ${c.sheet || 1} ${c.kind === 'sheetAdded' ? 'added' : 'removed'}`;
   const what = c.before && c.after && c.before !== c.after ? `${c.before} changes to ${c.after}`

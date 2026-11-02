@@ -46,7 +46,12 @@ async function devInvoke(fn, payload = {}) {
     const thumbs = (review?.sheets?.done || [1]).map((n) => JSON.parse(localStorage.getItem(`${REVIEW_KEY}-thumb-${n}`) || 'null'))
       .filter((t) => t && t.revB === review?.revB?.id);
     const canEdit = new URLSearchParams(location.search).get('readonly') !== '1';
-    return { ...SAMPLE, review, canEdit, ...(payload.withThumbs ? { thumbs, savedBy: review ? SAMPLE.user.displayName : null } : {}) };
+    const signRule = JSON.parse(localStorage.getItem(`${REVIEW_KEY}-sign`) || 'null');
+    return { ...SAMPLE, review, canEdit, canAdmin: canEdit, signRule, canSign: true, ...(payload.withThumbs ? { thumbs, savedBy: review ? SAMPLE.user.displayName : null } : {}) };
+  }
+  if (fn === 'setSignRule') {
+    const rule = payload.group || payload.notUploader ? { group: payload.group || null, notUploader: !!payload.notUploader } : null;
+    localStorage.setItem(`${REVIEW_KEY}-sign`, JSON.stringify(rule)); return { ok: true, rule };
   }
   if (fn === 'saveThumb') { localStorage.setItem(`${REVIEW_KEY}-thumb-${payload.sheet}`, JSON.stringify(payload)); return { ok: true }; }
   if (fn === 'getAttachment') {

@@ -17,14 +17,15 @@ globalThis.JIRA = async (path, init) => {
   // (as Jira does: keys it does not find are left out, not listed in issueErrors)
   if (path.includes('/issue/bulkfetch')) return { issues: JSON.parse(init.body).issueIdsOrKeys.filter((k) => k !== 'NOPE-1').map((key) => ({ key })), issueErrors: [] };
   if (path.includes('/properties/')) return {};
-  if (path.includes('mypermissions')) return { permissions: { EDIT_ISSUES: { havePermission: true } } };
+  if (path.includes('mypermissions')) return { permissions: { EDIT_ISSUES: { havePermission: true }, ADMINISTER_PROJECTS: { havePermission: false }, ADMINISTER: { havePermission: true } } };
+  if (path.includes('/group/bulk')) return { values: (S.groups || []).filter((g) => path.includes(`groupName=${encodeURIComponent(g)}`)).map((name) => ({ name })) };
   if (path.includes('/myself')) return S.me;
   if (init?.method === 'PUT') {
     if (S.putFail) return { __status: 500, body: { errorMessages: ['boom'] } };
     S.description = structuredClone(JSON.parse(init.body).fields.description);
     return {};
   }
-  return { id: '100', key: 'ENG-1', fields: { summary: 's', description: structuredClone(S.description), attachment: S.attachments } };
+  return { id: '100', key: 'ENG-1', fields: { summary: 's', description: structuredClone(S.description), attachment: S.attachments, project: { id: '10000', key: 'ENG' } } };
 };
 const said = () => notesFromAdf(S.description).map((x) => `${x.n}:${noteKey(x.text)}`).join('|');
 const add = (text, expect = said()) => defs.addNote({ context: { extension: { issue: { key: 'ENG-1' } }, accountId: S.me.accountId }, payload: { text, expect } });
@@ -161,4 +162,32 @@ test('a markup answered as raised must name a work item that exists', async () =
   const d = globalThis.KV.get('review:100').markDecisions;
   assert.equal(d['p9-1'].status, 'open');
   assert.equal(d['p9-2'].status, 'raised');
+});
+
+test('a project can limit sign-off to a group and keep the uploader from signing; the other answers still save', async () => {
+  fresh2();
+  S.groups = ['quality'];
+  S.attachments[1].author = { accountId: 'alice' };
+  S.me = { accountId: 'alice', displayName: 'Alice', groups: { items: [] } };
+  assert.equal((await defs.setSignRule({ ...ctx, payload: { group: 'nobody' } })).ok, false);
+  assert.equal((await defs.setSignRule({ ...ctx, payload: { group: 'quality', notUploader: true } })).ok, true);
+  await save(review({ decisions: { 's1-c1': { status: 'accepted' } } }));
+  const signIt = () => save(review({ decisions: { 's1-c1': { status: 'accepted', signedAt: '2026-11-02T06:00:00Z' } } }), ['s1-c1']);
+  // not in the group
+  let out = await signIt();
+  assert.match(out.signRefused, /members of quality/);
+  assert.equal(globalThis.KV.get('review:100').decisions['s1-c1'].status, 'accepted');
+  assert.ok(!globalThis.KV.get('review:100').decisions['s1-c1'].signedBy);
+  // in the group, but attached the revision being signed off
+  S.me = { accountId: 'alice', displayName: 'Alice', groups: { items: [{ name: 'quality' }] } };
+  out = await signIt();
+  assert.match(out.signRefused, /attached this revision/);
+  assert.equal((await gate()).result, false);
+  // another member of the group signs
+  S.me = { accountId: 'bob', displayName: 'Bob', groups: { items: [{ name: 'quality' }] } };
+  out = await signIt();
+  assert.equal(out.signRefused, undefined);
+  assert.equal(globalThis.KV.get('review:100').decisions['s1-c1'].signedBy, 'Bob');
+  assert.equal((await gate()).result, true);
+  S.me = { accountId: 'alice', displayName: 'Alice' }; S.groups = [];
 });
