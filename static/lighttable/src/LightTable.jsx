@@ -984,12 +984,15 @@ function NeedsYou({ res, all, notes = [], decisions, marks, markDecisions, sel, 
   ];
   const total = (all || res.clouds).length + marks.length;
   if (!total) return null;
+  // every change or markup with a decision counts as answered, signed or not, so each answer moves the count
+  const answered = (all || res.clouds).filter((c) => ['declared', 'accepted', 'rejected'].includes(decisions[c.id]?.status)).length
+    + marks.filter((m) => ['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)).length;
   const signers = [...new Set(Object.values(decisions).map((d) => d.signedBy).filter(Boolean))];
   const i = todo.findIndex((x) => x.id === sel);
   const next = todo[(i + 1) % todo.length];
   return (
     <div className={`rl-needs ${todo.length ? '' : 'done'}`}>
-      <p>{todo.length ? <><b>{total - todo.length} of {total}</b> done<span className="what">{readOnly ? 'Still to decide: ' : 'Left for you: '}{whatOf(todo, marks, decisions, notes)}</span></>
+      <p>{todo.length ? <><b>{answered} of {total}</b> answered<span className="what">{readOnly ? 'Still to decide: ' : 'Left for you: '}{whatOf(todo, marks, decisions, notes)}</span></>
         : <><b>All {total}</b> answered{signers.length ? <span className="what">Signed off by {signers.join(', ')}</span> : null}
           {clear ? <span className="what ready">Jira will now let this change order through to release.</span> : null}</>}</p>
       {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{readOnly ? (i === -1 ? 'Step through' : 'Next') : (i === -1 ? 'Start' : 'Next')}</button>}
