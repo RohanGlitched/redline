@@ -385,3 +385,8 @@ button { font: inherit; color: inherit; }
 
 /* changes left open on the previous revisions: a quiet amber band, apart from this pair's own changes */
 .rl-carried { border-style: solid; border-color: color-mix(in srgb, #d99a1c 55%, transparent); background: color-mix(in srgb, #d99a1c 8%, transparent); }
+
+/* writing an undeclared change up as a note: the words shown and editable before they are added */
+.rl-notedraft { margin: 6px 0 8px; } .rl-notedraft label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--rl-subtle); }
+.rl-notedraft input { font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--rl-border); border-radius: 4px; background: var(--rl-surface); color: var(--rl-text); }
+.rl-notedraft .rl-choices { margin-top: 6px; }

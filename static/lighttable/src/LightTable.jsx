@@ -1105,10 +1105,28 @@ function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, o
 }
 
 // What a change note for this change would say, from what Redline read: "Zone C3: moved 3 mm right and down".
-const draftNote = (c) => {
+const draftNote = (c, multi = false) => {
   const what = c.before && c.after && c.before !== c.after ? `${c.before} changes to ${c.after}` : (meaningOf(c.before, c.after)[0]?.text || kindText(c) || '');
-  return `Zone ${c.zone}: ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
+  return `${multi ? `Sheet ${c.sheet || 1}, zone` : 'Zone'} ${c.zone}: ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
 };
+
+// Writing a change up as a note: the drafted words, editable, then one click adds them to the change notes.
+function NoteDraft({ c, notes, multi, onAddNote }) {
+  const [text, setText] = useState(null), [busy, setBusy] = useState(false);
+  const next = notes.length ? Math.max(...notes.map((n) => n.n)) + 1 : 1;
+  if (text == null) return <p className="suggest">If this change is intended: <button className="link" onClick={() => setText(draftNote(c, multi))}>write it up as note {next}</button></p>;
+  return (
+    <div className="rl-notedraft">
+      <label>Note {next}, as it will read in the change notes
+        <input value={text} maxLength={400} onChange={(e) => setText(e.target.value)} />
+      </label>
+      <div className="rl-choices">
+        <button className="rl-btn primary" disabled={busy || !text.trim()} onClick={async () => { setBusy(true); try { await onAddNote(c, text.trim()); } finally { setBusy(false); setText(null); } }}>{busy ? 'Adding…' : 'Add to the change notes'}</button>
+        <button className="link" disabled={busy} onClick={() => setText(null)}>Cancel</button>
+      </div>
+    </div>
+  );
+}
 
 function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, onSign, onAddNote = null }) {
   const state = cloudState(d);
@@ -1163,9 +1181,7 @@ function CloudRow({ c, i, d, notes, res, visible, active, onSelect, onDecide, on
           <>
             <p className="st warn">{c.kind === 'titleBlock' ? 'The drawing does not name the revision it releases' : 'Not in the change notes'}</p>
             {c.kind !== 'titleBlock' && c.suggest && <p className="suggest">Near note {c.suggest}. <button className="link" onClick={() => onDecide(c.id, { status: 'declared', note: c.suggest })}>Declare in note {c.suggest}</button></p>}
-            {c.kind !== 'titleBlock' && !c.housekeeping && onAddNote && !c.suggest && (
-              <p className="suggest">If this change is intended, write it up: <button className="link" onClick={() => onAddNote(c, draftNote(c))}>add note {notes.length ? Math.max(...notes.map((n) => n.n)) + 1 : 1}, "{draftNote(c)}"</button></p>
-            )}
+            {c.kind !== 'titleBlock' && !c.housekeeping && onAddNote && !c.suggest && <NoteDraft c={c} notes={notes} multi={(res.pages?.[0] || 1) > 1 || (res.pages?.[1] || 1) > 1} onAddNote={onAddNote} />}
             <div className="rl-choices">
               {c.kind !== 'titleBlock' && <select aria-label={`Declare change ${c.n} in a note`} value="" onChange={(e) => e.target.value && onDecide(c.id, { status: 'declared', note: +e.target.value })}>
                 <option value="">Declare in note…</option>

@@ -327,13 +327,14 @@ resolver.define('addNote', async (req) => {
     doc.content.push({ type: 'orderedList', attrs: { order: n }, content: [item] });
   }
   await jira(route`/rest/api/3/issue/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { description: doc } }) });
-  // the audit log says who wrote the note from the light table
-  const me = await (await jira(route`/rest/api/3/myself`)).json();
-  const audit = (await kvs.get(auditKey(issue.id ?? (await (await jira(route`/rest/api/3/issue/${key}?fields=summary`)).json()).id))) || [];
-  return { notes: notesFromAdf(doc), n, ...(await (async () => { try {
+  // the audit log says who wrote the note from the light table (a failure here never undoes the note)
+  try {
+    const me = await (await jira(route`/rest/api/3/myself`)).json();
+    const audit = (await kvs.get(auditKey(issue.id))) || [];
     audit.push({ at: new Date().toISOString(), by: me.accountId, name: me.displayName, noteAdded: { n, text } });
-    await kvs.set(auditKey(issue.id), audit.slice(-200)); return {};
-  } catch { return {}; } })()) };
+    await kvs.set(auditKey(issue.id), audit.slice(-200));
+  } catch (e) { console.warn('redline: note added, audit entry not written'); }
+  return { notes: notesFromAdf(doc), n };
 });
 
 // A judge or new user on an empty site can add the bundled sample change order (two public-domain

@@ -141,14 +141,14 @@ export function noteSheet(text) {
   return m ? +m[1] : null;
 }
 
-export function linkNotes(clouds, notes, sheet = 1) {
+export function linkNotes(clouds, notes, sheet = 1, multi = false) {
   const zoneRe = /\bzones?\s+([A-H]\d{1,2}(?:\s*(?:,|and|&)\s*[A-H]\d{1,2})*)/gi;
-  const byZone = new Map();
+  const byZone = new Map(), named = new Set();
   for (const n of notes) {
     // a note that names another sheet never declares a change on this one
     const ns = noteSheet(n.text);
     if (ns && ns !== sheet) continue;
-    for (const m of n.text.matchAll(zoneRe)) for (const z of m[1].split(/\s*(?:,|and|&)\s*/i)) byZone.set(z.toUpperCase(), n.n);
+    for (const m of n.text.matchAll(zoneRe)) for (const z of m[1].split(/\s*(?:,|and|&)\s*/i)) { byZone.set(z.toUpperCase(), n.n); if (ns) named.add(n.n); }
   }
   // A note claims a cloud outright only when it is the single change in the zone the note names.
   // Two changes in one zone, or a change one zone over, are offered as suggestions a person confirms,
@@ -156,7 +156,8 @@ export function linkNotes(clouds, notes, sheet = 1) {
   const inZone = new Map();
   for (const c of clouds) inZone.set(c.zone, (inZone.get(c.zone) || 0) + 1);
   return clouds.map((c) => {
-    if (byZone.has(c.zone) && inZone.get(c.zone) === 1) return { ...c, note: byZone.get(c.zone), suggest: null };
+    // (with several sheets, only a note that names this sheet claims a change outright; others suggest)
+    if (byZone.has(c.zone) && inZone.get(c.zone) === 1 && (!multi || named.has(byZone.get(c.zone)))) return { ...c, note: byZone.get(c.zone), suggest: null };
     const near = [c.zone, ...neighbours(c.zone)].find((z) => byZone.has(z));
     return { ...c, note: null, suggest: near ? byZone.get(near) : null };
   });
@@ -200,7 +201,7 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
     const A = hA.missing ? downsample(w.blank, k) : w.img, B = hA.missing ? w.img : downsample(w.blank, k);
     const hiA = hA.missing ? w.blank : present, hiBw = hA.missing ? present : w.blank;
     const clouds = [{ id: 'c1', n: 1, ...w.cloud, zone: zoneOf(w.cloud, A.w, A.h) }];
-    return { A, B, Bw: B, hiA, hiBw, k, bCanvas: hB.canvas || present.canvas, clouds: linkNotes(clouds, notes, page || 1), transform: [1, 0, 0, 0, 1, 0], ms: 0, dpi: Math.round(present.dpi / k), displayDpi: Math.round(present.dpi), pages: [hA.pages, hB.pages] };
+    return { A, B, Bw: B, hiA, hiBw, k, bCanvas: hB.canvas || present.canvas, clouds: linkNotes(clouds, notes, page || 1, Math.max(hA.pages || 1, hB.pages || 1) > 1), transform: [1, 0, 0, 0, 1, 0], ms: 0, dpi: Math.round(present.dpi / k), displayDpi: Math.round(present.dpi), pages: [hA.pages, hB.pages] };
   }
   // the engine works near 150 dpi; small sheets are drawn at 300 dpi and halved, large ones used as drawn
   const k = Math.max(1, Math.round(hA.dpi / 150));
@@ -270,7 +271,7 @@ export async function analyse(invoke, revA, revB, notes, onStage = () => {}, pag
   const setAside = (r.rejected || []).filter((c) => c.shiftNcc !== undefined)
     .sort((p, q) => p.y0 - q.y0 || p.x0 - q.x0)
     .map((c, i) => ({ id: `a${i + 1}`, n: i + 1, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, kind: c.kind, zone: zoneOf(c, A.w, A.h), match: Math.round(Math.min(c.shiftNcc, c.shiftNccWorst ?? 1) * 1000) / 1000 }));
-  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes, page || 1), setAside, transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
+  return { A, B, Bw, hiA, hiBw, k, bCanvas: hB.canvas, clouds: linkNotes(clouds, notes, page || 1, Math.max(hA.pages || 1, hB.pages || 1) > 1), setAside, transform: r.transform, ms, dpi, displayDpi, pages: [hA.pages, hB.pages] };
 }
 
 // ---------- paper markups ----------
