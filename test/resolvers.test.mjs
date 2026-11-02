@@ -13,6 +13,7 @@ const S = { me: { accountId: 'alice', displayName: 'Alice' }, description: null,
 const desc = (...ts) => ({ type: 'doc', version: 1, content: [{ type: 'orderedList', attrs: { order: 1 }, content: ts.map((t) => ({ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: t }] }] })) }] });
 globalThis.JIRA = async (path, init) => {
   if (S.down) return { __status: 503, body: {} };
+  if (path.includes('/issue/NOPE-1')) return { __status: 404, body: {} };
   if (path.includes('/properties/')) return {};
   if (path.includes('mypermissions')) return { permissions: { EDIT_ISSUES: { havePermission: true } } };
   if (path.includes('/myself')) return S.me;
@@ -147,4 +148,15 @@ test('an answer keeps its author only on the markup in the same place: nobody ca
   assert.equal(d['p9-1'].by, 'Alice');
   assert.equal(d['p9-2'].by, 'Bob');
   S.me = { accountId: 'alice', displayName: 'Alice' };
+});
+
+test('a markup answered as raised must name a work item that exists', async () => {
+  fresh2();
+  S.attachments = [...S.attachments, { id: '9', filename: 'print.jpg', mimeType: 'image/jpeg', created: '2026-11-02T03:00:00Z' }];
+  const print = { id: 9, filename: 'print.jpg' };
+  await save(review({ print, marks: [{ id: 'p9-1', n: 1, zone: 'B2', box: [0, 0, 10, 10] }, { id: 'p9-2', n: 2, zone: 'D4', box: [50, 50, 60, 60] }],
+    markDecisions: { 'p9-1': { status: 'raised', key: 'NOPE-1' }, 'p9-2': { status: 'raised', key: 'ENG-1' } } }));
+  const d = globalThis.KV.get('review:100').markDecisions;
+  assert.equal(d['p9-1'].status, 'open');
+  assert.equal(d['p9-2'].status, 'raised');
 });

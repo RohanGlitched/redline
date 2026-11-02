@@ -228,9 +228,17 @@ resolver.define('saveReview', async (req) => {
     const here = (r.marks || []).find((x) => x.id === id);
     const samePlace = (x) => here?.box && x.box && /^p(\d+)-/.exec(x.id)?.[1] === /^p(\d+)-/.exec(id)?.[1] && overlap(x.box, here.box) >= 0.3;
     const carried = (stored?.marks || []).filter(samePlace).map((x) => stored.markDecisions?.[x.id]).find((d) => d && d.byId && d.status === m.status && d.byId === m.byId && d.at === m.at);
-    const was = carried || stored?.markDecisions?.[id];
-    if (m.status && m.status !== 'open' && was?.status === m.status) { m.by = was.by; m.byId = was.byId; m.at = was.at; }
+    // (by id only when the stored markup with that id is in the same place: a renumbered read never inherits a name)
+    const was = carried || ((stored?.marks || []).some((x) => x.id === id && samePlace(x)) ? stored?.markDecisions?.[id] : null);
+    // the whole answer is kept with its author (a raised markup keeps the work item that author raised)
+    if (m.status && m.status !== 'open' && was?.status === m.status && (was.key ?? null) === (m.key ?? null)) { m.by = was.by; m.byId = was.byId; m.at = was.at; }
     else if (m.status && m.status !== 'open') { m.by = me.displayName; m.byId = me.accountId; m.at = now; }
+  }
+  // a markup newly answered as raised names a work item this person can see, or it is not raised
+  for (const [id, m] of Object.entries(r.markDecisions || {})) {
+    if (m.status !== 'raised' || (stored?.markDecisions?.[id]?.status === 'raised' && stored.markDecisions[id].key === m.key)) continue;
+    const ok = /^[A-Z][A-Z0-9_]+-\d+$/.test(String(m.key || '')) && (await jira(route`/rest/api/3/issue/${m.key}?fields=summary`).then((x) => x.status !== 404).catch(() => false));
+    if (!ok) r.markDecisions[id] = { status: 'open' };
   }
   if (r.print?.setAside) r.print = +stored?.print?.id === +r.print.id && stored.print.setAside ? stored.print : { ...r.print, by: me.displayName, byId: me.accountId, at: now };
   // "held since": when this review's gate last went from clear (or new) to blocked
@@ -262,7 +270,7 @@ resolver.define('saveReview', async (req) => {
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   try {
     const audit = (await kvs.get(auditKey(issue.id))) || [];
-  audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed, ...(reread ? { reread: `${stored.engine} -> ${r.engine}, ${stored.clouds?.length || 0} -> ${r.clouds?.length || 0} changes` } : {}) });
+  audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed, ...(!sameRevs ? { pdfsSeen } : {}), ...(reread ? { reread: `${stored.engine} -> ${r.engine}, ${stored.clouds?.length || 0} -> ${r.clouds?.length || 0} changes` } : {}) });
     await kvs.set(auditKey(issue.id), fitAudit(audit));
   } catch (e) { console.warn('redline: review saved, audit entry not written'); }
   // searchable copy for JQL only; the validator, the gadget and Rovo recompute from app storage
@@ -587,7 +595,8 @@ async function refreshVerdict(id, again = true) {
   }
   const v = verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description));
   // a save made while this ran wrote its own, newer verdict: an older one is never written over it
-  if (((await kvs.get(reviewKey(id)))?.version || 0) !== (review.version || 0)) return;
+  // (a newer save landed meanwhile: work its verdict out again from the work item as it is now)
+  if (((await kvs.get(reviewKey(id)))?.version || 0) !== (review.version || 0)) return again ? refreshVerdict(id, false) : undefined;
   await indexGate(id, review, v);
   await put({ status: v.blocked ? 'blocked' : 'clear', text: v.text, open: v.open || 0 }, { revB: review.revB, version: review.version });
   if (again && ((await kvs.get(reviewKey(id)))?.version || 0) !== (review.version || 0)) await refreshVerdict(id, false);
