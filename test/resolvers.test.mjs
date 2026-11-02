@@ -14,7 +14,8 @@ const desc = (...ts) => ({ type: 'doc', version: 1, content: [{ type: 'orderedLi
 globalThis.JIRA = async (path, init) => {
   if (S.down) return { __status: 503, body: {} };
   if (path.includes('/issue/NOPE-1')) return { __status: 404, body: {} };
-  if (path.includes('/issue/bulkfetch')) return { issues: JSON.parse(init.body).issueIdsOrKeys.filter((k) => k !== 'NOPE-1').map((key) => ({ key })) };
+  // (as Jira does: keys it does not find are left out, not listed in issueErrors)
+  if (path.includes('/issue/bulkfetch')) return { issues: JSON.parse(init.body).issueIdsOrKeys.filter((k) => k !== 'NOPE-1').map((key) => ({ key })), issueErrors: [] };
   if (path.includes('/properties/')) return {};
   if (path.includes('mypermissions')) return { permissions: { EDIT_ISSUES: { havePermission: true } } };
   if (path.includes('/myself')) return S.me;

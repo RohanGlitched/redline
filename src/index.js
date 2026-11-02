@@ -176,7 +176,8 @@ resolver.define('saveReview', async (req) => {
   const stillAttached = (id) => (issue.fields.attachment || []).some((a) => +a.id === +id);
   if (sameRevs && !r.print && stored.print && stillAttached(stored.print.id)) { r.print = stored.print; r.marks = stored.marks || []; r.markDecisions = { ...(stored.markDecisions || {}), ...(r.markDecisions || {}) }; }
   // nothing changed since the last save (the light table saves once when it opens): no write, no audit entry
-  if (sameRevs && !reread && !(req.payload.signed || []).length && !(req.payload.confirmed || []).length && sameReview(stored, r)) return { ok: true, unchanged: true, version: stored.version, gate: verdictOf(issue.fields.attachment, stored, notes), decisions: stored.decisions };
+  if (sameRevs && !reread && !(req.payload.signed || []).length && !(req.payload.confirmed || []).length && sameReview(stored, r)
+    && !Object.values(stored.markDecisions || {}).some((d) => d?.unchecked)) return { ok: true, unchanged: true, version: stored.version, gate: verdictOf(issue.fields.attachment, stored, notes), decisions: stored.decisions };
   const me = await (await jira(route`/rest/api/3/myself`)).json();
   const signed = [];
   // Signatures are never taken from the browser's copy of a decision (shared/review.mjs settleSignatures)
@@ -224,6 +225,7 @@ resolver.define('saveReview', async (req) => {
   // only a malformed key or one Jira does not find is refused (a busy or failing Jira never undoes a real answer)
   r.markDecisions = Object.fromEntries(Object.entries(r.markDecisions || {}).filter(([, m]) => m && typeof m === 'object'));
   // (an answer whose lookup could not be made is checked again on the next save, never trusted for good)
+  for (const m of Object.values(r.markDecisions)) if (m.status === 'raised' && typeof m.key === 'string') m.key = m.key.trim().toUpperCase();
   const newlyRaised = Object.entries(r.markDecisions).filter(([id, m]) => m.status === 'raised' && (m.unchecked || !(stored?.markDecisions?.[id]?.status === 'raised' && !stored.markDecisions[id].unchecked && stored.markDecisions[id].key === m.key)));
   const KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
   for (const [id, m] of newlyRaised) if (!KEY.test(String(m.key || ''))) r.markDecisions[id] = { status: 'open' };
@@ -234,10 +236,16 @@ resolver.define('saveReview', async (req) => {
     const body = await jira(route`/rest/api/3/issue/bulkfetch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issueIdsOrKeys: batch, fields: ['summary'] }) })
       .then((x) => x.json()).catch(() => null);
     if (!body) { batch.forEach((x) => unchecked.add(x)); continue; }
-    // a key Jira names as not found is refused; a work item moved since comes back under its new key and still counts
-    const errs = new Set((body.issueErrors || []).flatMap((e) => e.issueIdsOrKeys || []));
+    // Jira leaves out keys it does not find (issueErrors lists only errors worth retrying): each key left out is asked
+    // for on its own, so a work item moved since (it answers under its new key) still counts, a 404 is refused, and
+    // anything else is checked again on the next save
     const found = new Set((body.issues || []).map((x) => x.key));
-    for (const x of batch) if (errs.size ? errs.has(x) : !found.has(x) && (body.issues || []).length < batch.length) missing.add(x);
+    const retry = (body.issueErrors || []).length > 0;
+    for (const x of batch.filter((x) => !found.has(x))) {
+      if (retry) { unchecked.add(x); continue; }
+      const one = await jira(route`/rest/api/3/issue/${x}?fields=summary`).then((res) => res.status).catch(() => 0);
+      if (one === 404) missing.add(x); else if (!one) unchecked.add(x);
+    }
   }
   for (const [id, m] of newlyRaised) {
     if (missing.has(m.key)) r.markDecisions[id] = { status: 'open' };
