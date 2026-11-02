@@ -224,7 +224,9 @@ resolver.define('saveReview', async (req) => {
   // who answered each pen markup, and who set a photo aside, as Jira names them
   for (const [id, m] of Object.entries(r.markDecisions || {})) {
     if (m.status === 'raising') m.status = 'open';
-    const was = stored?.markDecisions?.[id];
+    // an answer carried from an earlier markup (a re-read numbers them differently) keeps the name of whoever gave it
+    const carried = (stored?.marks || []).map((x) => stored.markDecisions?.[x.id]).find((d) => d && d.byId && d.status === m.status && d.byId === m.byId && d.at === m.at);
+    const was = carried || stored?.markDecisions?.[id];
     if (m.status && m.status !== 'open' && was?.status === m.status) { m.by = was.by; m.byId = was.byId; m.at = was.at; }
     else if (m.status && m.status !== 'open') { m.by = me.displayName; m.byId = me.accountId; m.at = now; }
   }
@@ -375,6 +377,7 @@ resolver.define('addSample', async (req) => {
     await jira(route`/rest/api/3/issue/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { description: doc } }) });
   }
   for (const f of req.payload.files) if (!have.has(f.name)) await attach(key, f.name, f.mime || 'application/pdf', f.data);
+  await refreshVerdict(issue.id).catch(() => {}); // held until compared: the gadget and search say so at once
   return { ok: true };
 });
 
@@ -572,6 +575,7 @@ async function refreshVerdict(id) {
       await kvs.delete(`gate:${id}`).catch(() => {});
       return;
     }
+    if (await kvs.get(reviewKey(id))) return; // a first review was saved meanwhile: it wrote its own verdict
     const text = conflict ? `${conflict} different drawings are attached with revisions` : 'the drawing revisions have not been compared yet';
     await indexGate(id, null, { blocked: true, text, reasons: [{ kind: 'uncompared', short: 'not compared yet' }] });
     await put({ status: 'blocked', text, open: 0 });

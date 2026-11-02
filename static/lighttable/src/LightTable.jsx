@@ -20,7 +20,10 @@ const kindText = (c) => (c.kind === 'titleBlock' ? `Title block reads Rev ${c.ti
   : c.housekeeping === 'revLetter' ? `Revision letter ${c.revLetter.a} to ${c.revLetter.b}, as this revision should read`
   : c.countedBack ? 'Set aside by Redline as a re-plot shift, counted back in by the reviewer'
   : c.textOnly && c.housekeeping !== 'stamp' ? 'Text changed (too small a change to show in the line work)' : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
-  : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}` : KIND_TEXT[c.kind]);
+  : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}`
+  // a change whose ink is words on the drawing says so, with the words
+  : c.after && !c.before && c.kind !== 'removed' ? `Text added: "${c.after}"` : c.before && !c.after && c.kind !== 'added' ? `Text removed: "${c.before}"`
+  : KIND_TEXT[c.kind]);
 const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed', sheetAdded: 'Whole sheet added in this revision', sheetRemoved: 'Whole sheet removed in this revision' };
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -984,7 +987,7 @@ function NeedsYou({ res, all, notes = [], decisions, marks, markDecisions, sel, 
   const next = todo[(i + 1) % todo.length];
   return (
     <div className={`rl-needs ${todo.length ? '' : 'done'}`}>
-      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? 'needs a decision' : 'need a decision') : 'need you'}<span className="what">{whatOf(todo, marks, decisions, notes)}</span></>
+      <p>{todo.length ? <><b>{total - todo.length} of {total}</b> done<span className="what">{readOnly ? 'Still to decide: ' : 'Left for you: '}{whatOf(todo, marks, decisions, notes)}</span></>
         : <><b>All {total}</b> answered{signers.length ? <span className="what">Signed off by {signers.join(', ')}</span> : null}
           {clear ? <span className="what ready">Jira will now let this change order through to release.</span> : null}</>}</p>
       {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{readOnly ? (i === -1 ? 'Step through' : 'Next') : (i === -1 ? 'Start' : 'Next')}</button>}

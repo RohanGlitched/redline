@@ -86,6 +86,14 @@ export default function Panel() {
         </div>
         <button className="rl-btn primary" onClick={() => open()}>{gate ? 'Open light table' : 'Compare revisions'}</button>
       </div>
+      {!r && !gate && (
+        <ul className="rl-panel-will">
+          <li>Every change between the two revisions, clouded, with its zone</li>
+          <li>Each change matched to the numbered change notes ({o.notes?.length || 0} in the description), and the values checked against them</li>
+          <li>The title block's revision letter{o.images?.length ? ', and the pen markups on the attached photo' : ''}</li>
+          <li>Release waits until every change is declared and signed off</li>
+        </ul>
+      )}
       {r && (
         <div className={`rl-panel-body ${thumbs.length ? '' : 'solo'}`}>
           {thumbs.length > 0 && (
