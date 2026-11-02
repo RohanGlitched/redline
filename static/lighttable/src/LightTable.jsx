@@ -953,10 +953,13 @@ function MarkCrop({ flat, m }) {
 }
 
 // Sticky at the top of the ledger: how many things still need a person, and a button to the next one.
-// "3 changes, 1 pen markup": what the outstanding items are, so the count is never a mystery
-function whatOf(todo, marks) {
-  const m = todo.filter((x) => marks.includes(x)).length, c = todo.length - m;
-  return [c && `${c} ${c === 1 ? 'change' : 'changes'}`, m && `${m} pen ${m === 1 ? 'markup' : 'markups'}`].filter(Boolean).join(', ');
+// "2 to declare, 1 to sign, 1 pen markup": what the outstanding items are and what each needs, so every answer
+// visibly moves the line (declaring a change moves it from "to declare" to "to sign")
+function whatOf(todo, marks, decisions) {
+  const m = todo.filter((x) => marks.includes(x)).length;
+  const sign = todo.filter((x) => !marks.includes(x) && ['declared', 'accepted'].includes(decisions[x.id]?.status)).length;
+  const decide = todo.length - m - sign;
+  return [decide && `${decide} to declare or answer`, sign && `${sign} to sign off`, m && `${m} pen ${m === 1 ? 'markup' : 'markups'}`].filter(Boolean).join(', ');
 }
 
 // what still needs an answer on every sheet compared so far, not just the one on the table
@@ -972,7 +975,7 @@ function NeedsYou({ res, all, decisions, marks, markDecisions, sel, onSelect, re
   const next = todo[(i + 1) % todo.length];
   return (
     <div className={`rl-needs ${todo.length ? '' : 'done'}`}>
-      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? 'needs a decision' : 'need a decision') : 'need you'}<span className="what">{whatOf(todo, marks)}</span></>
+      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? 'needs a decision' : 'need a decision') : 'need you'}<span className="what">{whatOf(todo, marks, decisions)}</span></>
         : <><b>All {total}</b> answered{signers.length ? <span className="what">Signed off by {signers.join(', ')}</span> : null}
           {clear ? <span className="what ready">Jira will now let this change order through to release.</span> : null}</>}</p>
       {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{readOnly ? (i === -1 ? 'Step through' : 'Next') : (i === -1 ? 'Start' : 'Next')}</button>}
