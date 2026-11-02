@@ -396,3 +396,6 @@ button { font: inherit; color: inherit; }
 /* before the first comparison: what Redline will check */
 .rl-panel-will { margin: 8px 0 0; padding: 0 0 0 18px; font-size: 13px; line-height: 1.6; color: var(--rl-subtle); }
 .rl-panel-will { padding-left: 50px; }
+
+/* a card scrolled to stays clear of the sticky line above the list */
+.rl-row { scroll-margin-top: 72px; }

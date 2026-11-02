@@ -130,3 +130,21 @@ test('a later save of the same pair never drops a change, and a PDF attached lat
   await save(review({ decisions: globalThis.KV.get('review:100').decisions }));
   assert.equal((await gate()).result, false);
 });
+
+test('an answer keeps its author only on the markup in the same place: nobody can sign a new markup in another name', async () => {
+  fresh2();
+  S.attachments = [...S.attachments, { id: '9', filename: 'print.jpg', mimeType: 'image/jpeg', created: '2026-11-02T03:00:00Z' }];
+  const print = { id: 9, filename: 'print.jpg' };
+  S.me = { accountId: 'alice', displayName: 'Alice' };
+  await save(review({ print, marks: [{ id: 'p9-1', n: 1, zone: 'B2', box: [0, 0, 10, 10] }], markDecisions: { 'p9-1': { status: 'dismissed' } } }));
+  const alice = globalThis.KV.get('review:100').markDecisions['p9-1'];
+  assert.equal(alice.by, 'Alice');
+  // Bob keeps Alice's answer on her markup, and sends a new markup elsewhere carrying a copy of her answer
+  S.me = { accountId: 'bob', displayName: 'Bob' };
+  await save(review({ print, marks: [{ id: 'p9-1', n: 1, zone: 'B2', box: [0, 0, 10, 10] }, { id: 'p9-2', n: 2, zone: 'D4', box: [50, 50, 60, 60] }],
+    markDecisions: { 'p9-1': alice, 'p9-2': { ...alice } } }));
+  const d = globalThis.KV.get('review:100').markDecisions;
+  assert.equal(d['p9-1'].by, 'Alice');
+  assert.equal(d['p9-2'].by, 'Bob');
+  S.me = { accountId: 'alice', displayName: 'Alice' };
+});
