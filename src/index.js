@@ -3,7 +3,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs, pairOf, revLabel, unplacedPdfs } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
-import { ENGINE_VERSION, matchChanges, overlap, sameReview, settleSignatures, carriedChanges, notesDoneBefore } from '../shared/review.mjs';
+import { ENGINE_VERSION, matchChanges, sameReview, settleSignatures, carriedChanges, notesDoneBefore, uniqueMarks, keepEarlierMarks } from '../shared/review.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
 
 export { verdictOf, notesFromAdf };
@@ -187,46 +187,10 @@ resolver.define('saveReview', async (req) => {
   // first recorded, so a review cannot be emptied or softened after the fact.
   // A re-read (above) replaces the old changes with the ones the current engine found, and the audit log says so.
   // what the previous pair of revisions left open comes along, whatever the browser sent
-  // every markup has its own id: two sent under one id are both kept, the second renamed and unanswered
-  if (r.marks?.length) {
-    const seenIds = new Set();
-    r.marks = r.marks.map((m) => {
-      if (!seenIds.has(m.id)) { seenIds.add(m.id); return m; }
-      let id = m.id;
-      for (let k = 2; seenIds.has(id); k++) id = `${m.id}-${k}`;
-      seenIds.add(id);
-      r.markDecisions = { ...(r.markDecisions || {}), [id]: { status: 'open' } };
-      return { ...m, id };
-    });
-  }
+  // pen markups: one id each, and on a new pair every earlier markup kept by place with its answer (shared/review.mjs)
+  Object.assign(r, uniqueMarks(r.marks, r.markDecisions));
   if (!sameRevs && stored) {
-    const mids = new Set((r.marks || []).map((m) => m.id));
-    const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
-    // (a stored markup the new read found again, in the same place, is the new one: it is not kept twice)
-    const refound = (m) => (r.marks || []).some((x) => photoOf(x) === photoOf(m) && m.box && x.box && overlap(m.box, x.box) >= 0.3);
-    // an answer follows its markup by place, and only when every earlier markup in that place was answered: a read that
-    // merges two markups into one never absorbs an open question. An answer the browser carried over from an earlier
-    // markup (not given in this session) is held to the same rule.
-    r.markDecisions = { ...(r.markDecisions || {}) };
-    const near = (x) => (stored.marks || []).filter((m) => photoOf(m) === photoOf(x) && m.box && x.box && overlap(m.box, x.box) >= 0.3);
-    const storedAnswers = new Set((stored.marks || []).map((m) => JSON.stringify(stored.markDecisions?.[m.id] || null)));
-    for (const x of r.marks || []) {
-      const answers = near(x).map((m) => stored.markDecisions?.[m.id]);
-      if (!answers.length) continue;
-      const allAnswered = answers.every((a) => a && a.status !== 'open'), sent = r.markDecisions[x.id];
-      if (allAnswered && (!sent || sent.status === 'open')) r.markDecisions[x.id] = answers[0];
-      else if (!allAnswered && sent && sent.status !== 'open' && storedAnswers.has(JSON.stringify(sent))) r.markDecisions[x.id] = { status: 'open' };
-    }
-    // every earlier markup the new read did not find again in the same place is kept with its answer, under an id no
-    // other markup has (its own, else "-was", "-was2"...): a machinist's open question never disappears with a re-read
-    const taken = new Set((r.marks || []).map((m) => m.id));
-    const freeId = (id) => { if (!taken.has(id)) return id; for (let k = 1; ; k++) { const c = `${id}-was${k > 1 ? k : ''}`; if (!taken.has(c)) return c; } };
-    for (const m of (stored.marks || []).filter((m) => stillAttached(photoOf(m)) && !refound(m))) {
-      const id = freeId(m.id);
-      taken.add(id);
-      r.marks = [...(r.marks || []), { ...m, id }];
-      r.markDecisions[id] = stored.markDecisions?.[m.id] || { status: 'open' };
-    }
+    Object.assign(r, keepEarlierMarks(stored, r.marks, r.markDecisions, stillAttached));
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []), ...carriedChanges(stored, r.revA, notes).filter((c) => !ids.has(c.id))];
     // notes done before count only when this pair continues the last one (a deleted revision undoes them)

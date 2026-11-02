@@ -119,3 +119,52 @@ export function notesDoneBefore(previous, revA, notes = null) {
   }
   return [...done.values()];
 }
+
+// ---------- pen markups across saves ----------
+
+// Every markup has its own id: two sent under one id are both kept, the second renamed and left unanswered.
+export function uniqueMarks(marks, markDecisions) {
+  if (!marks?.length) return { marks, markDecisions };
+  const seen = new Set(), decisions = { ...(markDecisions || {}) };
+  const out = marks.map((m) => {
+    if (!seen.has(m.id)) { seen.add(m.id); return m; }
+    let id = m.id;
+    for (let k = 2; seen.has(id); k++) id = `${m.id}-${k}`;
+    seen.add(id);
+    decisions[id] = { status: 'open' };
+    return { ...m, id };
+  });
+  return { marks: out, markDecisions: decisions };
+}
+
+// A save of a new pair of revisions: the markups the new read found, merged with the ones stored before.
+//  - An answer follows its markup by place, and only when every earlier markup in that place was answered: a read
+//    that merges two markups into one never absorbs an open question. An answer the browser carried over from an
+//    earlier markup (not given in this session) is held to the same rule.
+//  - Every earlier markup the new read did not find again in the same place is kept with its answer, under an id no
+//    other markup has (its own, else "-was", "-was2"...): a machinist's open question never disappears with a re-read.
+// stillAttached(photoId) says whether the photo a markup came from is still on the work item.
+export function keepEarlierMarks(stored, marks = [], markDecisions = {}, stillAttached = () => true) {
+  marks = [...(marks || [])];
+  const decisions = { ...(markDecisions || {}) };
+  const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
+  const samePlace = (a, b) => photoOf(a) === photoOf(b) && a.box && b.box && overlap(a.box, b.box) >= 0.3;
+  const storedAnswers = new Set((stored.marks || []).map((m) => JSON.stringify(stored.markDecisions?.[m.id] || null)));
+  for (const x of marks) {
+    const answers = (stored.marks || []).filter((m) => samePlace(m, x)).map((m) => stored.markDecisions?.[m.id]);
+    if (!answers.length) continue;
+    const allAnswered = answers.every((a) => a && a.status !== 'open'), sent = decisions[x.id];
+    if (allAnswered && (!sent || sent.status === 'open')) decisions[x.id] = answers[0];
+    else if (!allAnswered && sent && sent.status !== 'open' && storedAnswers.has(JSON.stringify(sent))) decisions[x.id] = { status: 'open' };
+  }
+  const found = marks.slice();
+  const taken = new Set(marks.map((m) => m.id));
+  const freeId = (id) => { if (!taken.has(id)) return id; for (let k = 1; ; k++) { const c = `${id}-was${k > 1 ? k : ''}`; if (!taken.has(c)) return c; } };
+  for (const m of (stored.marks || []).filter((m) => stillAttached(photoOf(m)) && !found.some((x) => samePlace(m, x)))) {
+    const id = freeId(m.id);
+    taken.add(id);
+    marks.push({ ...m, id });
+    decisions[id] = stored.markDecisions?.[m.id] || { status: 'open' };
+  }
+  return { marks, markDecisions: decisions };
+}

@@ -515,3 +515,30 @@ test('later PDFs: a revision between the pair is covered, a copy of the reviewed
   assert.deepEqual(pairOf([pdf(1, 'X_rev-C.pdf'), pdf(2, 'X_rev-D.pdf'), pdf(3, 'X_rev-D marked up.pdf')], review).map((p) => p.id), [1, 2]);
   assert.match(unplacedPdfs([pdf(1, 'X_rev-C.pdf'), pdf(2, 'X_rev-D.pdf'), pdf(3, 'X_rev-C2.pdf')], review)[0].why, /older/);
 });
+
+// ---------- pen markups across a new pair of revisions ----------
+import { uniqueMarks, keepEarlierMarks } from '../shared/review.mjs';
+test('earlier markups: kept by place under a free id, answers only where every earlier markup was answered', () => {
+  const mk = (id, box) => ({ id, box });
+  const dismissed = { status: 'dismissed', by: 'Asha' };
+  // the new read numbers a markup at another place p9-1: the earlier p9-1 and p9-1-was are both kept, renamed, with answers
+  const stored = { print: { id: 9 }, marks: [mk('p9-1', [50, 50, 60, 60]), mk('p9-1-was', [0, 0, 10, 10])], markDecisions: { 'p9-1': dismissed, 'p9-1-was': { status: 'open' } } };
+  const out = keepEarlierMarks(stored, [mk('p9-1', [80, 80, 90, 90])], {});
+  assert.deepEqual(out.marks.map((m) => m.id), ['p9-1', 'p9-1-was', 'p9-1-was-was']);
+  assert.equal(out.markDecisions['p9-1-was'].status, 'dismissed');
+  assert.equal(out.markDecisions['p9-1-was-was'].status, 'open');
+  assert.equal(out.markDecisions['p9-1'], undefined); // a markup in a new place starts unanswered
+  // a read that merges an answered and an open markup into one never absorbs the open question
+  const s2 = { print: { id: 9 }, marks: [mk('p9-1', [0, 0, 10, 10]), mk('p9-2', [6, 0, 16, 10])], markDecisions: { 'p9-1': dismissed, 'p9-2': { status: 'open' } } };
+  const merged = keepEarlierMarks(s2, [mk('p9-1', [0, 0, 16, 10])], { 'p9-1': dismissed });
+  assert.equal(merged.marks.length, 1);
+  assert.equal(merged.markDecisions['p9-1'].status, 'open');
+  // found again in the same place, all answered: the answer stands
+  assert.equal(keepEarlierMarks(s2, [mk('p9-7', [0, 0, 5, 10])], {}).markDecisions['p9-7'].status, 'dismissed');
+  // a markup whose photo was removed is not kept
+  assert.equal(keepEarlierMarks(stored, [], {}, () => false).marks.length, 0);
+  // two markups sent under one id are both kept, the second renamed and unanswered
+  const u = uniqueMarks([mk('p9-1', [0, 0, 1, 1]), mk('p9-1', [5, 5, 6, 6])], { 'p9-1': dismissed });
+  assert.deepEqual(u.marks.map((m) => m.id), ['p9-1', 'p9-1-2']);
+  assert.equal(u.markDecisions['p9-1-2'].status, 'open');
+});
