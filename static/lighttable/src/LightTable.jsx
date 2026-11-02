@@ -246,8 +246,8 @@ export default function LightTable() {
     const ids = new Set((order?.images || []).map((a) => String(a.id)));
     return (order?.review?.marks || []).filter((m) => {
       const photo = /^p(\d+)-/.exec(m.id)?.[1];
-      return photo && ids.has(photo) && !marks.some((x) => x.id === m.id) && (photo !== String(print?.att?.id) || !marks.some((x) => m.box && overlap(m.box, [x.x0, x.y0, x.x1, x.y1]) >= 0.3));
-    }).map((m) => ({ ...m, x0: m.box?.[0], y0: m.box?.[1], x1: m.box?.[2], y1: m.box?.[3], earlier: true }));
+      return photo && ids.has(photo) && !marks.some((x) => photo === String(print?.att?.id) && m.box && overlap(m.box, [x.x0, x.y0, x.x1, x.y1]) >= 0.3);
+    }).map((m) => ({ ...m, id: marks.some((x) => x.id === m.id) ? `${m.id}-was` : m.id, x0: m.box?.[0], y0: m.box?.[1], x1: m.box?.[2], y1: m.box?.[3], earlier: true }));
   }, [order, print, marks]);
   // someone who can view the work item but not edit it sees the review without the controls to change it
   const readOnly = order?.canEdit === false;
@@ -320,7 +320,7 @@ export default function LightTable() {
   const notesDone = useMemo(() => {
     const rv = order?.review;
     if (!rv || !res) return [];
-    return +rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id ? rv.notesDone || [] : notesDoneBefore(rv, res.revA, order.notes);
+    return +rv.revA?.id === +res.revA.id && +rv.revB?.id === +res.revB.id ? rv.notesDone || [] : +rv.revB?.id === +res.revA.id ? notesDoneBefore(rv, res.revA, order.notes) : [];
   }, [order, res?.revA?.id, res?.revB?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const sheetInfo = { count: sheets.count, done: Object.keys(sheets.compared).map(Number) };
   const gate = useMemo(() => {
@@ -328,7 +328,7 @@ export default function LightTable() {
     const images = order?.images || [];
     const newest = images[images.length - 1];
     const photoOk = !newest || ((print?.status === 'done' || print?.status === 'aside') && String(print.att?.id) === String(newest.id));
-    const newerPdfs = (order?.otherPdfs || []).filter((a) => (Date.parse(a.created) > Date.parse(res?.revB?.created || 0) || +a.id > +(res?.revB?.id || 0)) && !decisions[`pdf${a.id}`]?.signedBy);
+    const newerPdfs = (order?.otherPdfs || []).filter((a) => !decisions[`pdf${a.id}`]?.signedBy);
     if (newerPdfs.length) g.reasons = [...(g.reasons || []), { kind: 'pdf', short: `${newerPdfs.length} newer ${newerPdfs.length === 1 ? 'PDF' : 'PDFs'} not compared` }], g.blocked = true, g.text = [g.parts?.length ? g.text : null, `${newerPdfs.map((a) => a.filename).join(', ')} attached after the reviewed revision`].filter(Boolean).join('; ');
     if (!g.blocked && serverGate?.blocked) { g.blocked = true; g.text = serverGate.text; g.reasons = [{ kind: 'server', short: 'held in Jira, see the reason' }]; }
     const why = !newest || photoOk ? null : !print || print.status === 'reading' ? 'photo not read yet' : print.status === 'error' ? 'photo could not be read: set it aside' : 'newest photo not read';
@@ -464,14 +464,19 @@ export default function LightTable() {
     });
   };
   // write an undeclared change up as the next change note, then declare it there (the reviewer still signs)
+  const addingNote = useRef(false);
   const addNote = async (c, text) => {
+    if (addingNote.current) return;
+    addingNote.current = true;
     try {
       const out = await invoke('addNote', { text, expect: order.notes.map((x) => `${x.n}:${noteKey(x.text)}`).join('|') });
       if (out?.readOnly) return;
       if (out?.stale) { setOrder((o) => ({ ...o, notes: out.notes })); setSaved('The change notes were edited since this light table opened; they are reloaded. Read them, then add the note again if it is still needed.'); return; }
       setOrder((o) => ({ ...o, notes: out.notes }));
       decide(c.id, { status: 'declared', note: out.n });
+      setOrder((o) => ({ ...o, notesWritten: [...(o.notesWritten || []), { n: out.n, text, by: order.user.displayName }] }));
     } catch (e) { setSaved('Could not add the note: ' + (e.message || e)); }
+    finally { addingNote.current = false; }
   };
   const signOff = (id) => { const at = new Date().toISOString(); signedNow.current.set(id, { at, shown: shownNote(id) }); decide(id, { signedBy: order.user.displayName, signedAt: at }); };
   // a reviewer who disagrees with the engine counts a set-aside difference back in: it becomes a change
@@ -791,7 +796,7 @@ function Ledger({ earlierMarks = [], onAddNote = null, res, order, decisions, se
             return (
               <li key={n.n}>
                 <span className="num">{n.n}</span>
-                <p>{n.text}</p>
+                <p>{n.text}{(order.notesWritten || []).some((w) => w.n === n.n && noteKey(w.text) === noteKey(n.text)) && <em className="rl-written"> written in Redline by {(order.notesWritten || []).find((w) => w.n === n.n).by}</em>}</p>
                 <span className="links">
                   {here.map((c) => <button key={c.id} className="delta" onClick={() => onSelect(c)} aria-label={`Show change ${c.n}`}>{c.n}</button>)}
                   {elsewhere.map((x) => <button key={x} className="rl-goto" onClick={() => onSheet(x)}>On sheet {x}</button>)}
@@ -819,7 +824,7 @@ function Ledger({ earlierMarks = [], onAddNote = null, res, order, decisions, se
         <Housekeeping res={res} decisions={decisions} sel={sel} shown={shown} notes={order.notes} onSelect={onSelect} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <Carried list={allClouds.filter((c) => c.carried)} decisions={decisions} onDecide={onDecide} onSign={onSign} onSelect={onSelect} readOnly={order.canEdit === false} />
         <SetAside list={aside[res.sheet] || []} showing={showAside} onShow={onShowAside} onCountBack={onCountBack} readOnly={order.canEdit === false} />
-        <OtherPdfs list={(order.otherPdfs || []).filter((a) => Date.parse(a.created) > Date.parse(res.revB.created || 0) || +a.id > +res.revB.id)} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
+        <OtherPdfs list={order.otherPdfs || []} decisions={decisions} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
         <Confirm gate={gate} d={decisions.__ack || {}} asideCount={Object.values(aside || {}).flat().length} revs={[res.revA, res.revB]} onDecide={onDecide} onSign={onSign} readOnly={order.canEdit === false} />
       </section>
       <EarlierMarks list={earlierMarks} markDecisions={markDecisions} images={order.images || []} onDecideMark={onDecideMark} readOnly={order.canEdit === false} />
@@ -1019,14 +1024,14 @@ function OtherPdfs({ list, decisions, onDecide, onSign, readOnly }) {
   if (!list.length) return null;
   return (
     <div className="rl-confirm">
-      <p>Attached after {'the reviewed revision'}, and not named as a revision of this drawing. A new revision should be named like the others (for example "…_rev-E.pdf") so Redline compares it; anything else, set aside:</p>
+      <p>Attached after the last review and not covered by this comparison. A new revision should be named like the others (for example "…_rev-E.pdf") so Redline compares it; anything else, set aside by name:</p>
       <ul className="rl-other-pdfs">
         {list.map((a) => {
           const d = decisions[`pdf${a.id}`] || {};
           return (
             <li key={a.id}><span>{a.filename}</span>
               {d.signedBy ? <em> set aside by {d.signedBy}{!readOnly && <> <button className="link" onClick={() => onDecide(`pdf${a.id}`, { status: null, signedBy: null, signedAt: null })}>Undo</button></>}</em>
-                : !readOnly && <button className="rl-btn quiet" onClick={() => { onDecide(`pdf${a.id}`, { status: 'aside' }); onSign(`pdf${a.id}`); }}>Set aside: not a drawing</button>}
+                : !readOnly && <button className="rl-btn quiet" onClick={() => { onDecide(`pdf${a.id}`, { status: 'aside' }); onSign(`pdf${a.id}`); }}>{/copy|older/.test(a.why || '') ? 'Set aside: superseded' : 'Set aside: not a drawing'}</button>}
             </li>
           );
         })}
@@ -1106,8 +1111,13 @@ function Housekeeping({ res, decisions, sel, shown, notes, onSelect, onDecide, o
 
 // What a change note for this change would say, from what Redline read: "Zone C3: moved 3 mm right and down".
 const draftNote = (c, multi = false) => {
-  const what = c.before && c.after && c.before !== c.after ? `${c.before} changes to ${c.after}` : (meaningOf(c.before, c.after)[0]?.text || kindText(c) || '');
-  return `${multi ? `Sheet ${c.sheet || 1}, zone` : 'Zone'} ${c.zone}: ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
+  if (c.kind?.startsWith('sheet')) return `Sheet ${c.sheet || 1} ${c.kind === 'sheetAdded' ? 'added' : 'removed'}`;
+  const what = c.before && c.after && c.before !== c.after ? `${c.before} changes to ${c.after}`
+    : c.after && !c.before ? `adds "${c.after}"` : c.before && !c.after ? `removes "${c.before}"`
+    : c.countedBack ? 'line work changed' : (meaningOf(c.before, c.after)[0]?.text || kindText(c) || '');
+  // lower-case only an ordinary word ("Moved" -> "moved"), never a symbol or a callout in capitals
+  const lead = /^[A-Z][a-z]/.test(what) ? what.charAt(0).toLowerCase() + what.slice(1) : what;
+  return `${multi ? `Sheet ${c.sheet || 1}, zone` : 'Zone'} ${c.zone}: ${lead}`;
 };
 
 // Writing a change up as a note: the drafted words, editable, then one click adds them to the change notes.

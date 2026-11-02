@@ -1,7 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
-import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs, pairOf, revLabel } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs, pairOf, revLabel, unplacedPdfs } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 import { ENGINE_VERSION, matchChanges, overlap, sameReview, settleSignatures, carriedChanges, notesDoneBefore } from '../shared/review.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
@@ -54,8 +54,8 @@ export async function loadChangeOrder(key) {
     pair: pairOf(pick.pdfs, review).map((a) => +a.id),
     drawingConflict: pick.conflict || 0,
     // PDFs that are not this drawing's revisions (an ECO form, a test report): each can be set aside by name
-    otherPdfs: (issue.fields.attachment || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')) && !pairOf(pick.pdfs, review).some((p) => +p.id === +a.id))
-      .map((a) => ({ id: +a.id, filename: a.filename, created: a.created })),
+    otherPdfs: review ? unplacedPdfs(issue.fields.attachment, review).map((a) => ({ id: +a.id, filename: a.filename, created: a.created, why: a.why })) : [],
+    notesWritten: (await kvs.get(`written:${issue.id}`).catch(() => null)) || [],
     review,
     // the same verdict the release validator would give right now
     verdict: verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description)),
@@ -183,17 +183,19 @@ resolver.define('saveReview', async (req) => {
     r.markDecisions = { ...(r.markDecisions || {}) };
     for (const x of r.marks || []) {
       const here = (stored.marks || []).find((m) => photoOf(m) === photoOf(x) && m.box && x.box && overlap(m.box, x.box) >= 0.3);
-      if (!here) continue;
-      const sent = r.markDecisions[x.id], byNumber = stored.markDecisions?.[x.id], placed = stored.markDecisions?.[here.id];
-      // nothing said in this session: the answer given before to the markup in this place stands (no second Raise)
-      if (!sent || sent.status === 'open') { if (placed && placed.status !== 'open') r.markDecisions[x.id] = placed; continue; }
-      if (here.id !== x.id && byNumber && sent.status === byNumber.status) r.markDecisions[x.id] = placed || { status: 'open' };
+      // nothing said in this session about a markup found again in the same place: the answer given there before stands
+      const sent = r.markDecisions[x.id], placed = here && stored.markDecisions?.[here.id];
+      if ((!sent || sent.status === 'open') && placed && placed.status !== 'open') r.markDecisions[x.id] = placed;
     }
-    const open = (stored.marks || []).filter((m) => !mids.has(m.id) && stillAttached(photoOf(m)) && !refound(m));
-    r.marks = [...(r.marks || []), ...open];
-    // answers given before stand (a markup raised as ENG-7 is never offered for raising again)
-    const answers = Object.fromEntries(open.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v && v.status !== 'open'));
-    r.markDecisions = { ...(r.markDecisions || {}), ...Object.fromEntries(Object.entries(answers).filter(([id]) => !r.markDecisions?.[id] || r.markDecisions[id].status === 'open')) };
+    // every earlier markup the new read did not find again in the same place is kept, under its own id (renamed if a new
+    // markup took its number), with its answer: a machinist's open question never disappears with a re-read
+    for (const m of (stored.marks || []).filter((m) => stillAttached(photoOf(m)) && !refound(m))) {
+      const id = mids.has(m.id) ? `${m.id}-was` : m.id;
+      if ((r.marks || []).some((x) => x.id === id)) continue;
+      r.marks = [...(r.marks || []), { ...m, id }];
+      const was = stored.markDecisions?.[m.id];
+      if (was && (!r.markDecisions[id] || r.markDecisions[id].status === 'open')) r.markDecisions[id] = was;
+    }
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []), ...carriedChanges(stored, r.revA, notes).filter((c) => !ids.has(c.id))];
     // notes done before count only when this pair continues the last one (a deleted revision undoes them)
@@ -234,7 +236,8 @@ resolver.define('saveReview', async (req) => {
   if (r.print?.setAside) r.print = +stored?.print?.id === +r.print.id && stored.print.setAside ? stored.print : { ...r.print, by: me.displayName, byId: me.accountId, at: now };
   // "held since": when this review's gate last went from clear (or new) to blocked
   const heldSince = gate.blocked ? (stored?.gate?.status === 'blocked' && stored.heldSince ? stored.heldSince : now) : null;
-  const review = { ...r, gate, heldSince, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
+  const pdfsSeen = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')).map((a) => +a.id);
+  const review = { ...r, gate, heldSince, pdfsSeen, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
   // app storage keeps values up to 240 KiB: drop the set-aside list (it can be found again) before refusing
   if (Buffer.byteLength(JSON.stringify(review)) > 230000) review.setAside = (review.setAside || []).slice(0, 20);
   if (Buffer.byteLength(JSON.stringify(review)) > 230000) return { stale: true, error: 'This review is too large to save. Split the drawing into fewer sheets per change order.' };
@@ -318,6 +321,9 @@ resolver.define('addNote', async (req) => {
   // the description must read as the light table showed it: someone else's edit since is never written over
   const said = (list) => list.map((x) => `${x.n}:${noteKey(x.text)}`).join('|');
   if (req.payload?.expect != null && said(before) !== req.payload.expect) return { stale: true, notes: before };
+  // claim the note number first: two adds at once can never both write note n
+  try { await kvs.set(`note:${issue.id}:${n}`, new Date().toISOString(), { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: 1, unit: 'HOURS' } }); }
+  catch (e) { return { stale: true, notes: before }; }
   const item = { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] };
   const lists = (doc.content || []).filter((x) => x.type === 'orderedList');
   const last = lists[lists.length - 1];
@@ -326,15 +332,22 @@ resolver.define('addNote', async (req) => {
     if (!before.length) doc.content.push({ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Change notes' }] });
     doc.content.push({ type: 'orderedList', attrs: { order: n }, content: [item] });
   }
-  await jira(route`/rest/api/3/issue/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { description: doc } }) });
-  // the audit log says who wrote the note from the light table (a failure here never undoes the note)
+  try { await jira(route`/rest/api/3/issue/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { description: doc } }) }); }
+  catch (e) { await kvs.delete(`note:${issue.id}:${n}`).catch(() => {}); throw e; } // nothing written: the number is free again
+  // read it back: note n must be the words written here (an edit made in the same moment is reported, not hidden)
+  const after = notesFromAdf((await (await jira(route`/rest/api/3/issue/${key}?fields=description`)).json()).fields.description);
+  if (noteKey(after.find((x) => x.n === n)?.text) !== noteKey(text)) return { stale: true, notes: after };
+  // who wrote which note in Redline, shown next to the note and to Rovo; and the audit log (a failure never undoes it)
   try {
     const me = await (await jira(route`/rest/api/3/myself`)).json();
     const audit = (await kvs.get(auditKey(issue.id))) || [];
     audit.push({ at: new Date().toISOString(), by: me.accountId, name: me.displayName, noteAdded: { n, text } });
     await kvs.set(auditKey(issue.id), audit.slice(-200));
+    const written = (await kvs.get(`written:${issue.id}`)) || [];
+    written.push({ n, text, by: me.displayName, byId: me.accountId, at: new Date().toISOString() });
+    await kvs.set(`written:${issue.id}`, written.slice(-50));
   } catch (e) { console.warn('redline: note added, audit entry not written'); }
-  return { notes: notesFromAdf(doc), n };
+  return { notes: after, n, writtenBy: true };
 });
 
 // A judge or new user on an empty site can add the bundled sample change order (two public-domain
@@ -392,7 +405,9 @@ function describe(o) {
     gate: o.verdict?.text || r.gate?.text,
     compared: `${r.revA?.filename} to ${r.revB?.filename}`,
     staleReason: stale ? `${latest.filename} was attached after the last review` : undefined,
-    notes: o.notes,
+    // a note written from Redline's light table says so, and who wrote it
+    notes: o.notes.map((n) => { const w = (o.notesWritten || []).find((x) => x.n === n.n && noteKey(x.text) === noteKey(n.text)); return w ? { ...n, writtenInRedlineBy: w.by } : n; }),
+    otherPdfs: o.otherPdfs?.length ? o.otherPdfs.map((a) => `${a.filename} ${a.why}`) : undefined,
     changes: (r.clouds || []).map((c) => {
       const d = r.decisions?.[c.id] || {};
       const note = o.notes.find((n) => n.n === d.note);

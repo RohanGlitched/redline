@@ -1,7 +1,7 @@
 // Unit tests for the release verdict and change-note parsing. Run with: npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor, drawingPdfs, pairOf, revisionRank } from '../shared/gate.mjs';
+import { gateOf, verdictOf, valueSlip, numbersIn, drawingOf, noteSlip, valueOkFor, drawingPdfs, pairOf, revisionRank, unplacedPdfs } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
 
 const pdf = (id, created) => ({ id: String(id), mimeType: 'application/pdf', created });
@@ -481,7 +481,7 @@ test('revisions go in revision order, whatever order they were attached in', () 
 
 test('one reading of revision names everywhere: lowercase after a separator, a digit after the letter, words after', () => {
   assert.equal(revisionOfName('BRKT-0142_rev-d.pdf'), 'D');
-  assert.equal(revisionOfName('BRKT0142 RevD1.pdf'), 'D');
+  assert.equal(revisionOfName('BRKT0142 RevD1.pdf'), 'D1'); // the title block of rev D1 reads D1
   assert.equal(revisionOfName('BRKT-0142 Rev E (released).pdf'), 'E');
   assert.equal(drawingOf('BRKT0142 RevD1.pdf'), 'brkt0142');
   assert.equal(revisionOfName('plate_revs.pdf'), null);
@@ -503,4 +503,15 @@ test('a carried change accepted and signed meets the note it was declared in bef
   const notes = [{ n: 1, text: 'Zone D2: bore Ø25 to Ø25.5' }];
   const c = [{ id: 'k-s1-c1', carried: { note: 1 } }];
   assert.equal(gateOf(c, { 'k-s1-c1': { status: 'accepted', signedBy: 'Asha' } }, [], {}, null, notes).blocked, false);
+});
+
+test('later PDFs: a revision between the pair is covered, a copy of the reviewed one or an older name holds', () => {
+  const pdf = (id, filename) => ({ id, filename, mimeType: 'application/pdf', created: `2026-11-02T0${id}:00:00Z` });
+  const review = { revA: { id: 1 }, revB: { id: 2 }, pdfsSeen: [1, 2], clouds: [], decisions: {} };
+  // F then E attached after a C to D review: D to F is compared, E is covered
+  assert.deepEqual(unplacedPdfs([pdf(1, 'X_rev-C.pdf'), pdf(2, 'X_rev-D.pdf'), pdf(3, 'X_rev-F.pdf'), pdf(4, 'X_rev-E.pdf')], review), []);
+  const copy = unplacedPdfs([pdf(1, 'X_rev-C.pdf'), pdf(2, 'X_rev-D.pdf'), pdf(3, 'X_rev-D marked up.pdf')], review);
+  assert.match(copy[0].why, /another copy/);
+  assert.deepEqual(pairOf([pdf(1, 'X_rev-C.pdf'), pdf(2, 'X_rev-D.pdf'), pdf(3, 'X_rev-D marked up.pdf')], review).map((p) => p.id), [1, 2]);
+  assert.match(unplacedPdfs([pdf(1, 'X_rev-C.pdf'), pdf(2, 'X_rev-D.pdf'), pdf(3, 'X_rev-C2.pdf')], review)[0].why, /older/);
 });

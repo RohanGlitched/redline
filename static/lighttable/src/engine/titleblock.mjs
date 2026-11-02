@@ -6,7 +6,8 @@ import { parseRevision } from '../../../../shared/gate.mjs';
 // The revision a file name says it is: "BRKT-0142_rev-D.pdf" -> "D".
 export function revisionOfName(filename = '') {
   // the same reading as the release gate (shared/gate.mjs parseRevision)
-  return parseRevision(filename)?.rev ?? null;
+  const p = parseRevision(filename);
+  return p ? (p.sub && !/^\d+$/.test(p.rev) ? `${p.rev}${p.sub}` : p.rev) : null;
 }
 
 // "03" and "3" are the same revision

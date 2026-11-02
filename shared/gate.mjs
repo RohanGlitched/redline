@@ -159,6 +159,9 @@ export function drawingPdfs(attachments) {
 // The two revisions to compare: from the last reviewed revision to the newest (two revisions attached at once are
 // never skipped: D to F, not E to F), or the reviewed pair itself while nothing newer has arrived.
 export function pairOf(pdfs, review) {
+  // a later copy of the reviewed revision (same revision, another file) is not a new revision
+  const reviewedB = review && pdfs.find((p) => +p.id === +review.revB?.id);
+  if (reviewedB && revisionRank(reviewedB.filename) != null) pdfs = pdfs.filter((p) => +p.id === +reviewedB.id || revisionRank(p.filename) !== revisionRank(reviewedB.filename));
   const last = pdfs[pdfs.length - 1];
   if (!last) return [];
   const from = review && pdfs.find((p) => +p.id === +review.revB?.id);
@@ -166,6 +169,30 @@ export function pairOf(pdfs, review) {
   if (review && +review.revB?.id === +last.id) { const a = pdfs.find((p) => +p.id === +review.revA?.id); if (a) return [a, last]; }
   // the first comparison (or one after the reviewed revision was removed): the oldest against the newest
   return pdfs.length >= 2 ? [pdfs[0], last] : pdfs.slice(-2);
+}
+
+// PDFs attached after a review was saved that the comparison does not cover, each with the reason it holds:
+//  - not named as a revision of this drawing (an unknown file);
+//  - another copy of the reviewed revision ("rev-D marked up.pdf");
+//  - named as a revision older than the one reviewed ("rev C2" after a C to D review).
+// A named revision between the pair compared is covered by it (D to F includes E). One set aside by name holds no more.
+export function unplacedPdfs(attachments, review) {
+  if (!review) return [];
+  const all = (attachments || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''));
+  const { pdfs } = drawingPdfs(attachments);
+  const [pa, pb] = pairOf(pdfs, review);
+  const reviewedB = all.find((a) => +a.id === +review.revB?.id);
+  const seen = review.pdfsSeen ? new Set(review.pdfsSeen.map(Number)) : null;
+  const later = (a) => (seen ? !seen.has(+a.id) : reviewedB && (Date.parse(a.created) > Date.parse(review.savedAt || reviewedB.created) || +a.id > +reviewedB.id));
+  const rank = (a) => revisionRank(a?.filename);
+  return all.filter((a) => +a.id !== +pa?.id && +a.id !== +pb?.id && later(a) && !review.decisions?.[`pdf${a.id}`]?.signedBy).map((a) => {
+    const inChain = pdfs.some((p) => +p.id === +a.id);
+    if (!inChain) return { ...a, why: 'is not named as a revision of this drawing and is not compared' };
+    if (reviewedB && rank(a) != null && rank(a) === rank(reviewedB)) return { ...a, why: `is another copy of the reviewed ${revLabel(reviewedB.filename)}` };
+    // covered: newer than the reviewed revision and older than the newest, so the comparison runs across it
+    if (reviewedB && pb && rank(a) > rank(reviewedB) && rank(a) < rank(pb)) return null;
+    return { ...a, why: `is named as a revision older than the one reviewed (${revLabel(reviewedB?.filename)})` };
+  }).filter(Boolean);
 }
 
 export function verdictOf(attachments, review, notes = null) {
@@ -178,13 +205,8 @@ export function verdictOf(attachments, review, notes = null) {
   }
   if (!review) return { blocked: true, text: 'the drawing revisions have not been compared yet' };
   const reviewedB = (attachments || []).find((a) => +a.id === +review.revB?.id);
-  // any PDF attached after the reviewed revision that is not in the pair compared: an unnamed one, or one named as an
-  // earlier revision ("rev C2" after a C to D review), holds until compared or set aside by name
-  const [pa, pb] = pairOf(pdfs, review);
-  const unplaced = reviewedB ? (attachments || []).filter((a) => (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || ''))
-    && +a.id !== +pa?.id && +a.id !== +pb?.id && (Date.parse(a.created) > Date.parse(reviewedB.created) || +a.id > +reviewedB.id)
-    && !review.decisions?.[`pdf${a.id}`]?.signedBy) : [];
-  if (unplaced.length) return { blocked: true, text: `${unplaced.map((a) => a.filename).join(', ')} ${unplaced.length === 1 ? 'was' : 'were'} attached after the reviewed revision and is not compared; a new revision should be named like the others so Redline compares it; anything else, set it aside on the light table` };
+  const unplaced = unplacedPdfs(attachments, review);
+  if (unplaced.length) return { blocked: true, text: unplaced.map((a) => `${a.filename} ${a.why}`).join('; ') + '; set it aside on the light table if it is not a revision to compare' };
   const [a, b] = pairOf(pdfs, review);
   if (+review.revB?.id !== +b.id) return { blocked: true, text: pdfs.some((p) => +p.id === +review.revB?.id) ? 'a newer drawing revision was attached after the last review' : 'the reviewed drawing revision was removed or replaced; compare the revisions again' };
   if (review.revA?.id && +review.revA.id !== +a.id) return { blocked: true, text: 'the review compared a different pair of revisions' };

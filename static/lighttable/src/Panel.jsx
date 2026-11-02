@@ -103,9 +103,11 @@ export default function Panel() {
                 const sh = c.sheet || 1;
                 const head = multi && sh !== (r.clouds[i - 1]?.sheet || 1) || (multi && i === 0)
                   ? [<li key={`h${sh}`} className="sheet-head">Sheet {sh}</li>] : [];
+                // a note written from the light table says who wrote it, so a note and its sign-off by one person are visible
+                const wroteIt = (x) => x.status === 'declared' && (o.notesWritten || []).find((w) => w.n === x.note && noteKey(w.text) === noteKey(o.notes?.find((n) => n.n === x.note)?.text));
                 const slip = d.status === 'declared' && !valueOkFor(d, o.notes?.find((n) => n.n === d.note)) && slipOf(c, o.notes?.find((n) => n.n === d.note)?.text);
                 const st = slip ? 'undeclared' : cloudStatus(d);
-                const label = c.carried ? (d.status === 'accepted' ? `Fixed (left open on ${revLabel(c.carried.to)})` : d.status === 'rejected' ? 'Sent back again' : `Left open on ${revLabel(c.carried.to)}`) : d.status === 'rejected' ? 'Sent back' : slip ? valueLabel(c, d, o.notes?.find((n) => n.n === d.note)) : d.status === 'declared' ? `Note ${d.note}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
+                const label = c.carried ? (d.status === 'accepted' ? `Fixed (left open on ${revLabel(c.carried.to)})` : d.status === 'rejected' ? 'Sent back again' : `Left open on ${revLabel(c.carried.to)}`) : d.status === 'rejected' ? 'Sent back' : slip ? valueLabel(c, d, o.notes?.find((n) => n.n === d.note)) : d.status === 'declared' ? `Note ${d.note}${wroteIt(d) ? ', added in Redline' : ''}` : d.status === 'accepted' ? 'Accepted' : c.kind === 'titleBlock' ? 'Title block not updated' : c.housekeeping ? 'Housekeeping' : 'Not in notes';
                 return [...head, (
                   <li key={c.id} className={st}>
                     <button onClick={() => open({ id: c.id, sheet: c.sheet || 1 })} aria-label={`Change ${c.n}, zone ${c.zone}: ${label}${d.signedBy ? `, signed off by ${d.signedBy}` : ''}. Open it in the light table`}>
@@ -113,7 +115,7 @@ export default function Panel() {
                       <span className="zone">{c.zone}</span>
                       <span className="lab">{label}</span>
                       <span className="who">{d.signedBy && d.status === 'declared' && d.noteText != null && o.notes?.find((n) => n.n === d.note) && noteKey(o.notes.find((n) => n.n === d.note).text) !== d.noteText
-                        ? 'Note edited since signed: sign again' : d.signedBy ? `Signed, ${d.signedBy}` : st === 'declared' ? 'Needs sign-off' : ''}</span>
+                        ? 'Note edited since signed: sign again' : d.signedBy ? `Signed, ${d.signedBy}${wroteIt(d)?.by === d.signedBy ? ' (who wrote the note)' : ''}` : st === 'declared' ? 'Needs sign-off' : ''}</span>
                     </button>
                   </li>
                 )];
