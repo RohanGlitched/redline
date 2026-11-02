@@ -466,16 +466,17 @@ export default function LightTable() {
   // write an undeclared change up as the next change note, then declare it there (the reviewer still signs)
   const addingNote = useRef(false);
   const addNote = async (c, text) => {
-    if (addingNote.current) return;
+    if (addingNote.current) return false;
     addingNote.current = true;
     try {
       const out = await invoke('addNote', { text, expect: order.notes.map((x) => `${x.n}:${noteKey(x.text)}`).join('|') });
-      if (out?.readOnly) return;
-      if (out?.stale) { setOrder((o) => ({ ...o, notes: out.notes })); setSaved('The change notes were edited since this light table opened; they are reloaded. Read them, then add the note again if it is still needed.'); return; }
+      if (out?.readOnly) return false;
+      if (out?.stale) { setOrder((o) => ({ ...o, notes: out.notes })); setSaved('The change notes were edited since this light table opened; they are reloaded. Read them, then add the note again if it is still needed.'); return false; }
       setOrder((o) => ({ ...o, notes: out.notes }));
       decide(c.id, { status: 'declared', note: out.n });
       setOrder((o) => ({ ...o, notesWritten: [...(o.notesWritten || []), { n: out.n, text, by: order.user.displayName }] }));
-    } catch (e) { setSaved('Could not add the note: ' + (e.message || e)); }
+      return true;
+    } catch (e) { setSaved('Could not add the note: ' + (e.message || e)); return false; }
     finally { addingNote.current = false; }
   };
   const signOff = (id) => { const at = new Date().toISOString(); signedNow.current.set(id, { at, shown: shownNote(id) }); decide(id, { signedBy: order.user.displayName, signedAt: at }); };
@@ -1128,10 +1129,10 @@ function NoteDraft({ c, notes, multi, onAddNote }) {
   return (
     <div className="rl-notedraft">
       <label>Note {next}, as it will read in the change notes
-        <input value={text} maxLength={400} onChange={(e) => setText(e.target.value)} />
+        <input value={text} maxLength={400} autoFocus onFocus={(e) => e.target.select()} onChange={(e) => setText(e.target.value)} />
       </label>
       <div className="rl-choices">
-        <button className="rl-btn primary" disabled={busy || !text.trim()} onClick={async () => { setBusy(true); try { await onAddNote(c, text.trim()); } finally { setBusy(false); setText(null); } }}>{busy ? 'Adding…' : 'Add to the change notes'}</button>
+        <button className="rl-btn primary" disabled={busy || !text.trim()} onClick={async () => { setBusy(true); let added = false; try { added = await onAddNote(c, text.trim()); } finally { setBusy(false); if (added) setText(null); } }}>{busy ? 'Adding…' : 'Add to the change notes'}</button>
         <button className="link" disabled={busy} onClick={() => setText(null)}>Cancel</button>
       </div>
     </div>
