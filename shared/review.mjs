@@ -125,11 +125,11 @@ export function notesDoneBefore(previous, revA, notes = null) {
 // Every markup has its own id: two sent under one id are both kept, the second renamed and left unanswered.
 export function uniqueMarks(marks, markDecisions) {
   if (!marks?.length) return { marks, markDecisions };
-  const seen = new Set(), decisions = { ...(markDecisions || {}) };
+  const seen = new Set(), all = new Set(marks.map((m) => m.id)), decisions = { ...(markDecisions || {}) };
   const out = marks.map((m) => {
     if (!seen.has(m.id)) { seen.add(m.id); return m; }
     let id = m.id;
-    for (let k = 2; seen.has(id); k++) id = `${m.id}-${k}`;
+    for (let k = 2; seen.has(id) || all.has(id); k++) id = `${m.id}-${k}`;
     seen.add(id);
     decisions[id] = { status: 'open' };
     return { ...m, id };
@@ -154,7 +154,8 @@ export function keepEarlierMarks(stored, marks = [], markDecisions = {}, stillAt
     const answers = (stored.marks || []).filter((m) => samePlace(m, x)).map((m) => stored.markDecisions?.[m.id]);
     if (!answers.length) continue;
     const allAnswered = answers.every((a) => a && a.status !== 'open'), sent = decisions[x.id];
-    if (allAnswered && (!sent || sent.status === 'open')) decisions[x.id] = answers[0];
+    // (two answered markups read as one keep a raised one's answer, so the link to its work item is not lost)
+    if (allAnswered && (!sent || sent.status === 'open')) decisions[x.id] = answers.find((a) => a.status === 'raised') || answers[0];
     else if (!allAnswered && sent && sent.status !== 'open' && storedAnswers.has(JSON.stringify(sent))) decisions[x.id] = { status: 'open' };
   }
   const found = marks.slice();

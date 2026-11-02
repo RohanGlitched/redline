@@ -73,7 +73,8 @@ function fitAudit(audit) {
 // A small, app-only record of each change order's verdict (gate:<issueId>), written whenever the review is saved or the
 // work item's drawings, photos or notes change. The gadget and the Rovo search read these instead of every full review.
 async function indexGate(issueId, review, v) {
-  await kvs.set(`gate:${issueId}`, { blocked: !!v.blocked, text: v.text || null, reasons: (v.reasons || []).map((x) => ({ kind: x.kind, short: x.short })), since: review?.heldSince || review?.savedAt || null }).catch(() => {});
+  try { await kvs.set(`gate:${issueId}`, { blocked: !!v.blocked, text: v.text || null, reasons: (v.reasons || []).map((x) => ({ kind: x.kind, short: x.short })), since: review?.heldSince || review?.savedAt || null }); }
+  catch (e) { await kvs.delete('gate-index:v1').catch(() => {}); } // a lost write: the next gadget view indexes every review again
 }
 
 // ---------- resolver for the panel and the light table ----------
@@ -212,13 +213,12 @@ resolver.define('saveReview', async (req) => {
     r.sheets = { count: Math.max(r.sheets?.count || 1, stored.sheets?.count || 1), done: [...done].sort((x, y) => x - y) };
     // pen markups found earlier stay: those of the same photo, and those of an earlier photo nobody answered
     // (a newer photo never wipes a machinist's open question); answered ones of an earlier photo are history
-    const mids = new Set((r.marks || []).map((m) => m.id));
+    // each kept by place, never by its number in a read (a re-read can number them differently): the current photo's
+    // markups, and earlier photos' unanswered ones while they are attached
     const answered = (m) => ['raised', 'covered', 'dismissed'].includes(stored.markDecisions?.[m.id]?.status);
     const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
-    // each markup by its own photo: the current photo's, and earlier photos' unanswered ones while they are attached
-    const keep = (stored.marks || []).filter((m) => !mids.has(m.id) && (photoOf(m) === +r.print?.id || (!answered(m) && stillAttached(photoOf(m)))));
-    r.marks = [...(r.marks || []), ...keep];
-    r.markDecisions = { ...Object.fromEntries(keep.map((m) => [m.id, stored.markDecisions?.[m.id]]).filter(([, v]) => v)), ...(r.markDecisions || {}) };
+    const kept = (stored.marks || []).filter((m) => photoOf(m) === +r.print?.id || !answered(m));
+    Object.assign(r, keepEarlierMarks({ ...stored, marks: kept }, r.marks, r.markDecisions, stillAttached));
   }
   const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes, { setAside: (r.setAside || []).length, notesDone: r.notesDone });
   // who answered each pen markup, and who set a photo aside, as Jira names them
@@ -235,7 +235,7 @@ resolver.define('saveReview', async (req) => {
   // shown when it opened. A PDF attached later is never seen by a save: it holds until set aside by name.
   const attachedPdfs = new Set((issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')).map((a) => +a.id));
   const revBAt = Date.parse((issue.fields.attachment || []).find((a) => +a.id === +r.revB.id)?.created || 0);
-  const shownPdfs = (sameRevs && stored.pdfsSeen ? stored.pdfsSeen : req.payload.pdfsShown
+  const shownPdfs = (sameRevs && stored.pdfsSeen ? stored.pdfsSeen : (Array.isArray(req.payload.pdfsShown) ? req.payload.pdfsShown : null)
     || (issue.fields.attachment || []).filter((a) => Date.parse(a.created) <= revBAt).map((a) => a.id)).map(Number);
   const pdfsSeen = [...new Set([...shownPdfs.filter((id) => attachedPdfs.has(id)), +r.revA.id, +r.revB.id])];
   const review = { ...r, gate, heldSince, pdfsSeen, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
@@ -286,6 +286,9 @@ async function attach(key, name, mime, base64) {
 // A photo of a marked-up print, taken in the light table, is kept on the work item like any attachment.
 resolver.define('uploadPhoto', async (req) => {
   const a = await attach(issueKey(req), req.payload.name, 'image/jpeg', req.payload.data);
+  // the new photo holds the release until it is read: the gadget and search say so at once
+  const issue = await (await jira(route`/rest/api/3/issue/${issueKey(req)}?fields=summary`)).json();
+  await refreshVerdict(issue.id).catch(() => {});
   return { id: +a.id, filename: a.filename, mimeType: a.mimeType, created: a.created };
 });
 
@@ -353,6 +356,7 @@ resolver.define('addNote', async (req) => {
     written.push({ n, text, by: me.displayName, byId: me.accountId, at: new Date().toISOString() });
     await kvs.set(`written:${issue.id}`, written.slice(-50));
   } catch (e) { console.warn('redline: note added, audit entry not written'); }
+  await refreshVerdict(issue.id).catch(() => {});
   return { notes: after, n, writtenBy: true };
 });
 
@@ -544,31 +548,38 @@ export async function onIssueUpdated(event) {
   if (!fields.some((f) => f === 'attachment' || f === 'description')) return;
   const id = event.issue?.id;
   if (!id) return;
+  // with no review, only a new or removed PDF can change anything
+  if (!(await kvs.get(reviewKey(id))) && !(event.changelog?.items || []).some((i) => String(i.field || '').toLowerCase() === 'attachment' && /\.pdf$/i.test(`${i.fromString || ''}${i.toString || ''}`.trim()))) return;
+  await refreshVerdict(id);
+}
+
+// The verdict as the validator would give it now, written to the app-only index (gadget, Rovo) and the JQL copy. Run by
+// the trigger, and by Redline itself after it attaches a photo or writes a note (Jira may not send the app its own events).
+async function refreshVerdict(id) {
   const review = await kvs.get(reviewKey(id));
-  // with no review, only a new or removed attachment can change anything
-  if (!review && !(event.changelog?.items || []).some((i) => String(i.field || '').toLowerCase() === 'attachment' && /\.pdf$/i.test(`${i.fromString || ''}${i.toString || ''}`.trim()))) return;
   const res = await api.asApp().requestJira(route`/rest/api/3/issue/${id}?fields=attachment,description`);
   if (!res.ok) return;
   const issue = await res.json();
+  const put = (gate, extra = {}) => api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gate, ...extra }) });
   // a work item that now carries two drawing revisions but was never compared is held too (the validator
-  // already refuses its release); the JQL copy says so, so search and dashboards find it
+  // already refuses its release); the JQL copy and the index say so, so search, dashboards and Rovo find it
   if (!review) {
-    // (only PDFs named as drawing revisions, "BRKT-0142_rev-C.pdf": two invoices on a work item are not a change order)
-    // (the validator's own reading: two PDFs named as revisions of one drawing, or any two PDFs when none is so named)
+    // (only PDFs named as one drawing's revisions, "BRKT-0142_rev-C.pdf": two invoices on an HR ticket are not a change
+    // order, though the validator still refuses an uncompared pair on a transition it guards); fewer than two drops it
     const { pdfs, conflict, named } = drawingPdfs(issue.fields.attachment);
-    // only PDFs named as one drawing's revisions mark a work item for search: two invoices on an HR ticket do not
-    // (the validator still refuses an uncompared pair on a transition it guards); fewer than two drops the flag too
-    if ((pdfs.length < 2 || !named) && !conflict) { await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'DELETE' }).catch(() => {}); return; }
-    await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gate: { status: 'blocked', text: conflict ? `${conflict} different drawings are attached with revisions` : 'the drawing revisions have not been compared yet', open: 0 } }),
-    });
+    if ((pdfs.length < 2 || !named) && !conflict) {
+      await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, { method: 'DELETE' }).catch(() => {});
+      await kvs.delete(`gate:${id}`).catch(() => {});
+      return;
+    }
+    const text = conflict ? `${conflict} different drawings are attached with revisions` : 'the drawing revisions have not been compared yet';
+    await indexGate(id, null, { blocked: true, text, reasons: [{ kind: 'uncompared', short: 'not compared yet' }] });
+    await put({ status: 'blocked', text, open: 0 });
     return;
   }
   const v = verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description));
+  // a save made while this ran wrote its own, newer verdict: an older one is never written over it
+  if (((await kvs.get(reviewKey(id)))?.version || 0) !== (review.version || 0)) return;
   await indexGate(id, review, v);
-  await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gate: { status: v.blocked ? 'blocked' : 'clear', text: v.text, open: v.open || 0 }, revB: review.revB, version: review.version }),
-  });
+  await put({ status: v.blocked ? 'blocked' : 'clear', text: v.text, open: v.open || 0 }, { revB: review.revB, version: review.version });
 }
