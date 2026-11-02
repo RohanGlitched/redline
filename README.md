@@ -101,6 +101,8 @@ forge install
 
 Saving a review needs permission to edit the work item. People who can only view it see the review without the controls to change it.
 
+**Privacy:** Redline runs on Atlassian (no egress, no remote backend) and keeps its records only in Forge app storage. See [PRIVACY.md](PRIVACY.md).
+
 ## Layout
 
 ```
