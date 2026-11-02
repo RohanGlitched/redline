@@ -19,10 +19,12 @@ const MODES = [
 const kindText = (c) => (c.kind === 'titleBlock' ? `Title block reads Rev ${c.titleBlock.b}; this revision is Rev ${c.titleBlock.expected}`
   : c.housekeeping === 'revLetter' ? `Revision letter ${c.revLetter.a} to ${c.revLetter.b}, as this revision should read`
   : c.countedBack ? 'Set aside by Redline as a re-plot shift, counted back in by the reviewer'
-  : c.textOnly && c.housekeeping !== 'stamp' ? 'Text changed (too small a change to show in the line work)' : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
+  // a change found only in the drawing's text says what happened to the words (they are shown under it)
+  : c.textOnly && c.housekeeping !== 'stamp' ? `${c.after && !c.before ? 'Text added' : c.before && !c.after ? 'Text removed' : 'Text changed'} (too small a change to show in the line work)`
+  : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
   : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}`
-  // a change whose ink is words on the drawing says so (the words themselves are shown under it)
-  : c.after && !c.before && c.kind !== 'removed' ? 'Text added' : c.before && !c.after && c.kind !== 'added' ? 'Text removed'
+  // line work that came or went with words keeps saying it is line work: a new hole with its callout is not "text"
+  : c.kind === 'added' && c.after && !c.before ? 'New line work, with new text' : c.kind === 'removed' && c.before && !c.after ? 'Line work removed, with its text'
   : KIND_TEXT[c.kind]);
 const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed', sheetAdded: 'Whole sheet added in this revision', sheetRemoved: 'Whole sheet removed in this revision' };
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;

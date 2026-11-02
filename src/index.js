@@ -3,7 +3,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { gateOf, verdictOf, valueSlip, noteSlip, noteKey, drawingPdfs, pairOf, revLabel, unplacedPdfs } from '../shared/gate.mjs';
 import { notesFromAdf } from '../shared/notes.mjs';
-import { ENGINE_VERSION, matchChanges, sameReview, settleSignatures, carriedChanges, notesDoneBefore, uniqueMarks, keepEarlierMarks } from '../shared/review.mjs';
+import { ENGINE_VERSION, matchChanges, overlap, sameReview, settleSignatures, carriedChanges, notesDoneBefore, uniqueMarks, keepEarlierMarks } from '../shared/review.mjs';
 import { meaningOf } from '../static/lighttable/src/engine/meaning.mjs';
 
 export { verdictOf, notesFromAdf };
@@ -225,7 +225,9 @@ resolver.define('saveReview', async (req) => {
   for (const [id, m] of Object.entries(r.markDecisions || {})) {
     if (m.status === 'raising') m.status = 'open';
     // an answer carried from an earlier markup (a re-read numbers them differently) keeps the name of whoever gave it
-    const carried = (stored?.marks || []).map((x) => stored.markDecisions?.[x.id]).find((d) => d && d.byId && d.status === m.status && d.byId === m.byId && d.at === m.at);
+    const here = (r.marks || []).find((x) => x.id === id);
+    const samePlace = (x) => here?.box && x.box && /^p(\d+)-/.exec(x.id)?.[1] === /^p(\d+)-/.exec(id)?.[1] && overlap(x.box, here.box) >= 0.3;
+    const carried = (stored?.marks || []).filter(samePlace).map((x) => stored.markDecisions?.[x.id]).find((d) => d && d.byId && d.status === m.status && d.byId === m.byId && d.at === m.at);
     const was = carried || stored?.markDecisions?.[id];
     if (m.status && m.status !== 'open' && was?.status === m.status) { m.by = was.by; m.byId = was.byId; m.at = was.at; }
     else if (m.status && m.status !== 'open') { m.by = me.displayName; m.byId = me.accountId; m.at = now; }
@@ -558,7 +560,7 @@ export async function onIssueUpdated(event) {
 
 // The verdict as the validator would give it now, written to the app-only index (gadget, Rovo) and the JQL copy. Run by
 // the trigger, and by Redline itself after it attaches a photo or writes a note (Jira may not send the app its own events).
-async function refreshVerdict(id) {
+async function refreshVerdict(id, again = true) {
   const review = await kvs.get(reviewKey(id));
   const res = await api.asApp().requestJira(route`/rest/api/3/issue/${id}?fields=attachment,description`);
   if (!res.ok) return;
@@ -579,6 +581,8 @@ async function refreshVerdict(id) {
     const text = conflict ? `${conflict} different drawings are attached with revisions` : 'the drawing revisions have not been compared yet';
     await indexGate(id, null, { blocked: true, text, reasons: [{ kind: 'uncompared', short: 'not compared yet' }] });
     await put({ status: 'blocked', text, open: 0 });
+    // a first review saved while this was written: refresh once more so the review's own verdict stands
+    if (again && (await kvs.get(reviewKey(id)))) await refreshVerdict(id, false);
     return;
   }
   const v = verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description));
@@ -586,4 +590,5 @@ async function refreshVerdict(id) {
   if (((await kvs.get(reviewKey(id)))?.version || 0) !== (review.version || 0)) return;
   await indexGate(id, review, v);
   await put({ status: v.blocked ? 'blocked' : 'clear', text: v.text, open: v.open || 0 }, { revB: review.revB, version: review.version });
+  if (again && ((await kvs.get(reviewKey(id)))?.version || 0) !== (review.version || 0)) await refreshVerdict(id, false);
 }
