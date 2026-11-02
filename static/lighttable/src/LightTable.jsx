@@ -820,7 +820,7 @@ function Ledger({ earlierMarks = [], onAddNote = null, res, order, decisions, se
           {!order.notes.length && <li className="none">The work item has no numbered change notes. Number each change in the description, for example "1. Zone D3: bore Ø25 to Ø25.5".</li>}
         </ol>
       </section>
-      <NeedsYou res={res} all={allClouds} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} clear={gate && !gate.blocked} />
+      <NeedsYou res={res} all={allClouds} notes={order.notes} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} clear={gate && !gate.blocked} />
       <section className="rl-found">
         <h2>Found on the sheet <span>{res.clouds.length}</span></h2>
         <ul>
@@ -955,15 +955,24 @@ function MarkCrop({ flat, m }) {
 // Sticky at the top of the ledger: how many things still need a person, and a button to the next one.
 // "2 to declare, 1 to sign, 1 pen markup": what the outstanding items are and what each needs, so every answer
 // visibly moves the line (declaring a change moves it from "to declare" to "to sign")
-function whatOf(todo, marks, decisions) {
+// (a declared change whose note is gone, or whose values differ from its note, needs an answer before a signature,
+// exactly as its card offers: it counts as "to answer", not "to sign off")
+function whatOf(todo, marks, decisions, notes = []) {
   const m = todo.filter((x) => marks.includes(x)).length;
-  const sign = todo.filter((x) => !marks.includes(x) && ['declared', 'accepted'].includes(decisions[x.id]?.status)).length;
+  const signable = (c) => {
+    const d = decisions[c.id] || {};
+    if (d.status === 'accepted') return true;
+    if (d.status !== 'declared') return false;
+    const note = notes.find((n) => n.n === d.note);
+    return !!note && (valueOkFor(d, note) || !slipOf(c, note.text));
+  };
+  const sign = todo.filter((x) => !marks.includes(x) && signable(x)).length;
   const decide = todo.length - m - sign;
   return [decide && `${decide} to declare or answer`, sign && `${sign} to sign off`, m && `${m} pen ${m === 1 ? 'markup' : 'markups'}`].filter(Boolean).join(', ');
 }
 
 // what still needs an answer on every sheet compared so far, not just the one on the table
-function NeedsYou({ res, all, decisions, marks, markDecisions, sel, onSelect, readOnly, clear }) {
+function NeedsYou({ res, all, notes = [], decisions, marks, markDecisions, sel, onSelect, readOnly, clear }) {
   const todo = [
     ...(all || res.clouds).filter((c) => { const d = decisions[c.id] || {}; return d.status === 'rejected' ? false : !(d.status === 'declared' || d.status === 'accepted') || !d.signedBy; }),
     ...marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)),
@@ -975,7 +984,7 @@ function NeedsYou({ res, all, decisions, marks, markDecisions, sel, onSelect, re
   const next = todo[(i + 1) % todo.length];
   return (
     <div className={`rl-needs ${todo.length ? '' : 'done'}`}>
-      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? 'needs a decision' : 'need a decision') : 'need you'}<span className="what">{whatOf(todo, marks, decisions)}</span></>
+      <p>{todo.length ? <><b>{todo.length} of {total}</b> {readOnly ? (todo.length === 1 ? 'needs a decision' : 'need a decision') : 'need you'}<span className="what">{whatOf(todo, marks, decisions, notes)}</span></>
         : <><b>All {total}</b> answered{signers.length ? <span className="what">Signed off by {signers.join(', ')}</span> : null}
           {clear ? <span className="what ready">Jira will now let this change order through to release.</span> : null}</>}</p>
       {todo.length > 0 && <button className="rl-btn primary" onClick={() => onSelect(next)}>{readOnly ? (i === -1 ? 'Step through' : 'Next') : (i === -1 ? 'Start' : 'Next')}</button>}
