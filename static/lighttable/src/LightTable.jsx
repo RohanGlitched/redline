@@ -189,14 +189,15 @@ export default function LightTable() {
       // answers given before follow the markup by where it is on the print (a new read can number them differently)
       const before = (order?.review?.marks || []).filter((m) => m.id.startsWith(`p${att.id}-`)).map((m) => ({ ...m, x0: m.box?.[0], y0: m.box?.[1], x1: m.box?.[2], y1: m.box?.[3] }));
       const was = order?.review?.markDecisions || {}, used = new Set();
+      // (only when every earlier markup in that place was answered: a read that merges two never absorbs an open one)
       const answerFor = (k) => {
         const kb = [k.x0, k.y0, k.x1, k.y1];
-        const hit = before.filter((m) => !used.has(m.id) && m.box && overlap(m.box, kb) >= 0.3).sort((a, b) => overlap(b.box, kb) - overlap(a.box, kb))[0];
-        if (!hit) return null;
-        used.add(hit.id);
-        return was[hit.id]?.status && was[hit.id].status !== 'open' ? was[hit.id] : null;
+        const hits = before.filter((m) => !used.has(m.id) && m.box && overlap(m.box, kb) >= 0.3).sort((a, b) => overlap(b.box, kb) - overlap(a.box, kb));
+        if (!hits.length) return null;
+        hits.forEach((h) => used.add(h.id));
+        return hits.every((h) => was[h.id]?.status && was[h.id].status !== 'open') ? was[hits[0].id] : null;
       };
-      setMarkDecisions((m) => ({ ...m, ...Object.fromEntries(result.marks.map((k) => { const a = answerFor(k); return [k.id, m[k.id] && m[k.id].status !== 'open' && !a ? m[k.id] : a || m[k.id] || { status: 'open' }]; })) }));
+      setMarkDecisions((m) => ({ ...m, ...Object.fromEntries(result.marks.map((k) => [k.id, answerFor(k) || { status: 'open' }])) }));
       if (reduceMotion) { setPrint({ att, status: 'done', result }); setMode((m) => (sheetRef.current === 1 ? 'print' : m)); return; }
       // hold the photo as taken for a beat, then let it settle onto the sheet
       setFlatten({ url, src: result.corners, from, to, t: 0, w: photo.w, h: photo.h });
@@ -247,7 +248,13 @@ export default function LightTable() {
     return (order?.review?.marks || []).filter((m) => {
       const photo = /^p(\d+)-/.exec(m.id)?.[1];
       return photo && ids.has(photo) && !marks.some((x) => photo === String(print?.att?.id) && m.box && overlap(m.box, [x.x0, x.y0, x.x1, x.y1]) >= 0.3);
-    }).map((m) => ({ ...m, id: marks.some((x) => x.id === m.id) ? `${m.id}-was` : m.id, x0: m.box?.[0], y0: m.box?.[1], x1: m.box?.[2], y1: m.box?.[3], earlier: true }));
+    }).reduce((list, m) => {
+      // an id no other markup has, as on the server: its own, else "-was", "-was2"...
+      const taken = new Set([...marks.map((x) => x.id), ...list.map((x) => x.id)]);
+      let id = m.id;
+      for (let k = 1; taken.has(id); k++) id = `${m.id}-was${k > 1 ? k : ''}`;
+      return [...list, { ...m, id, x0: m.box?.[0], y0: m.box?.[1], x1: m.box?.[2], y1: m.box?.[3], earlier: true }];
+    }, []);
   }, [order, print, marks]);
   // someone who can view the work item but not edit it sees the review without the controls to change it
   const readOnly = order?.canEdit === false;
@@ -351,7 +358,7 @@ export default function LightTable() {
       setSaved('Saving');
       try {
         const sentSigned = [...signedNow.current.entries()], sentConfirmed = [...confirmedNow.current.entries()];
-        const out = await invoke('saveReview', { baseVersion: versionRef.current, signed: sentSigned.map(([id]) => id), confirmed: sentConfirmed.map(([id]) => id),
+        const out = await invoke('saveReview', { baseVersion: versionRef.current, pdfsShown: order.pdfIds || [], signed: sentSigned.map(([id]) => id), confirmed: sentConfirmed.map(([id]) => id),
           shown: Object.fromEntries([...sentSigned, ...sentConfirmed].map(([id, v]) => [id, v.shown]).filter(([, t]) => t != null)), review: {
           engine: ENGINE_VERSION, analysedAt: new Date().toISOString(),
           revA: { id: res.revA.id, filename: res.revA.filename }, revB: { id: res.revB.id, filename: res.revB.filename },
@@ -797,7 +804,7 @@ function Ledger({ earlierMarks = [], onAddNote = null, res, order, decisions, se
             return (
               <li key={n.n}>
                 <span className="num">{n.n}</span>
-                <p>{n.text}{(order.notesWritten || []).some((w) => w.n === n.n && noteKey(w.text) === noteKey(n.text)) && <em className="rl-written"> written in Redline by {(order.notesWritten || []).find((w) => w.n === n.n).by}</em>}</p>
+                <p>{n.text}{(order.notesWritten || []).some((w) => w.n === n.n && noteKey(w.text) === noteKey(n.text)) && <em className="rl-written"> written in Redline by {(order.notesWritten || []).find((w) => w.n === n.n && noteKey(w.text) === noteKey(n.text)).by}</em>}</p>
                 <span className="links">
                   {here.map((c) => <button key={c.id} className="delta" onClick={() => onSelect(c)} aria-label={`Show change ${c.n}`}>{c.n}</button>)}
                   {elsewhere.map((x) => <button key={x} className="rl-goto" onClick={() => onSheet(x)}>On sheet {x}</button>)}

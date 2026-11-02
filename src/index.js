@@ -54,12 +54,26 @@ export async function loadChangeOrder(key) {
     pair: pairOf(pick.pdfs, review).map((a) => +a.id),
     drawingConflict: pick.conflict || 0,
     // PDFs that are not this drawing's revisions (an ECO form, a test report): each can be set aside by name
+    pdfIds: (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')).map((a) => +a.id),
     otherPdfs: review ? unplacedPdfs(issue.fields.attachment, review).map((a) => ({ id: +a.id, filename: a.filename, created: a.created, why: a.why })) : [],
     notesWritten: (await kvs.get(`written:${issue.id}`).catch(() => null)) || [],
     review,
     // the same verdict the release validator would give right now
     verdict: verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description)),
   };
+}
+
+// an audit log keeps its newest 200 entries, and fewer if they would not fit in one storage value (240 KiB)
+function fitAudit(audit) {
+  let a = audit.slice(-200);
+  while (a.length > 1 && Buffer.byteLength(JSON.stringify(a)) > 200000) a = a.slice(Math.ceil(a.length / 10));
+  return a;
+}
+
+// A small, app-only record of each change order's verdict (gate:<issueId>), written whenever the review is saved or the
+// work item's drawings, photos or notes change. The gadget and the Rovo search read these instead of every full review.
+async function indexGate(issueId, review, v) {
+  await kvs.set(`gate:${issueId}`, { blocked: !!v.blocked, text: v.text || null, reasons: (v.reasons || []).map((x) => ({ kind: x.kind, short: x.short })), since: review?.heldSince || review?.savedAt || null }).catch(() => {});
 }
 
 // ---------- resolver for the panel and the light table ----------
@@ -173,28 +187,45 @@ resolver.define('saveReview', async (req) => {
   // first recorded, so a review cannot be emptied or softened after the fact.
   // A re-read (above) replaces the old changes with the ones the current engine found, and the audit log says so.
   // what the previous pair of revisions left open comes along, whatever the browser sent
+  // every markup has its own id: two sent under one id are both kept, the second renamed and unanswered
+  if (r.marks?.length) {
+    const seenIds = new Set();
+    r.marks = r.marks.map((m) => {
+      if (!seenIds.has(m.id)) { seenIds.add(m.id); return m; }
+      let id = m.id;
+      for (let k = 2; seenIds.has(id); k++) id = `${m.id}-${k}`;
+      seenIds.add(id);
+      r.markDecisions = { ...(r.markDecisions || {}), [id]: { status: 'open' } };
+      return { ...m, id };
+    });
+  }
   if (!sameRevs && stored) {
     const mids = new Set((r.marks || []).map((m) => m.id));
     const photoOf = (m) => +(/^p(\d+)-/.exec(m.id)?.[1] || stored.print?.id);
     // (a stored markup the new read found again, in the same place, is the new one: it is not kept twice)
     const refound = (m) => (r.marks || []).some((x) => photoOf(x) === photoOf(m) && m.box && x.box && overlap(m.box, x.box) >= 0.3);
-    // an answer follows its markup by place: when a new read numbers markups differently, an answer the browser carried
-    // by number to a markup in another place is replaced by the answer given to the markup in this place
+    // an answer follows its markup by place, and only when every earlier markup in that place was answered: a read that
+    // merges two markups into one never absorbs an open question. An answer the browser carried over from an earlier
+    // markup (not given in this session) is held to the same rule.
     r.markDecisions = { ...(r.markDecisions || {}) };
+    const near = (x) => (stored.marks || []).filter((m) => photoOf(m) === photoOf(x) && m.box && x.box && overlap(m.box, x.box) >= 0.3);
+    const storedAnswers = new Set((stored.marks || []).map((m) => JSON.stringify(stored.markDecisions?.[m.id] || null)));
     for (const x of r.marks || []) {
-      const here = (stored.marks || []).find((m) => photoOf(m) === photoOf(x) && m.box && x.box && overlap(m.box, x.box) >= 0.3);
-      // nothing said in this session about a markup found again in the same place: the answer given there before stands
-      const sent = r.markDecisions[x.id], placed = here && stored.markDecisions?.[here.id];
-      if ((!sent || sent.status === 'open') && placed && placed.status !== 'open') r.markDecisions[x.id] = placed;
+      const answers = near(x).map((m) => stored.markDecisions?.[m.id]);
+      if (!answers.length) continue;
+      const allAnswered = answers.every((a) => a && a.status !== 'open'), sent = r.markDecisions[x.id];
+      if (allAnswered && (!sent || sent.status === 'open')) r.markDecisions[x.id] = answers[0];
+      else if (!allAnswered && sent && sent.status !== 'open' && storedAnswers.has(JSON.stringify(sent))) r.markDecisions[x.id] = { status: 'open' };
     }
-    // every earlier markup the new read did not find again in the same place is kept, under its own id (renamed if a new
-    // markup took its number), with its answer: a machinist's open question never disappears with a re-read
+    // every earlier markup the new read did not find again in the same place is kept with its answer, under an id no
+    // other markup has (its own, else "-was", "-was2"...): a machinist's open question never disappears with a re-read
+    const taken = new Set((r.marks || []).map((m) => m.id));
+    const freeId = (id) => { if (!taken.has(id)) return id; for (let k = 1; ; k++) { const c = `${id}-was${k > 1 ? k : ''}`; if (!taken.has(c)) return c; } };
     for (const m of (stored.marks || []).filter((m) => stillAttached(photoOf(m)) && !refound(m))) {
-      const id = mids.has(m.id) ? `${m.id}-was` : m.id;
-      if ((r.marks || []).some((x) => x.id === id)) continue;
+      const id = freeId(m.id);
+      taken.add(id);
       r.marks = [...(r.marks || []), { ...m, id }];
-      const was = stored.markDecisions?.[m.id];
-      if (was && (!r.markDecisions[id] || r.markDecisions[id].status === 'open')) r.markDecisions[id] = was;
+      r.markDecisions[id] = stored.markDecisions?.[m.id] || { status: 'open' };
     }
     const ids = new Set((r.clouds || []).map((c) => c.id));
     r.clouds = [...(r.clouds || []), ...carriedChanges(stored, r.revA, notes).filter((c) => !ids.has(c.id))];
@@ -236,7 +267,13 @@ resolver.define('saveReview', async (req) => {
   if (r.print?.setAside) r.print = +stored?.print?.id === +r.print.id && stored.print.setAside ? stored.print : { ...r.print, by: me.displayName, byId: me.accountId, at: now };
   // "held since": when this review's gate last went from clear (or new) to blocked
   const heldSince = gate.blocked ? (stored?.gate?.status === 'blocked' && stored.heldSince ? stored.heldSince : now) : null;
-  const pdfsSeen = (issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')).map((a) => +a.id);
+  // the PDFs this review has seen: for the same pair, what was seen before; for a new pair, the PDFs the light table was
+  // shown when it opened. A PDF attached later is never seen by a save: it holds until set aside by name.
+  const attachedPdfs = new Set((issue.fields.attachment || []).filter((a) => a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')).map((a) => +a.id));
+  const revBAt = Date.parse((issue.fields.attachment || []).find((a) => +a.id === +r.revB.id)?.created || 0);
+  const shownPdfs = (sameRevs && stored.pdfsSeen ? stored.pdfsSeen : req.payload.pdfsShown
+    || (issue.fields.attachment || []).filter((a) => Date.parse(a.created) <= revBAt).map((a) => a.id)).map(Number);
+  const pdfsSeen = [...new Set([...shownPdfs.filter((id) => attachedPdfs.has(id)), +r.revA.id, +r.revB.id])];
   const review = { ...r, gate, heldSince, pdfsSeen, version: (stored?.version || 0) + 1, savedById: req.context.accountId, savedAt: now };
   // app storage keeps values up to 240 KiB: drop the set-aside list (it can be found again) before refusing
   if (Buffer.byteLength(JSON.stringify(review)) > 230000) review.setAside = (review.setAside || []).slice(0, 20);
@@ -244,7 +281,7 @@ resolver.define('saveReview', async (req) => {
   // two reviewers saving from the same version at once: each save first claims its version number, and only
   // one claim can exist, so the second gets "someone else just saved" instead of silently overwriting
   const claim = `claim:${issue.id}:${review.version}`;
-  try { await kvs.set(claim, now, { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: 1, unit: 'HOURS' } }); }
+  try { await kvs.set(claim, now, { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: 2, unit: 'MINUTES' } }); }
   catch (e) {
     // only an existing claim means someone else saved this version; any other storage error is reported as such
     if (await kvs.get(claim).catch(() => null)) return { conflict: true, review: (await kvs.get(reviewKey(issue.id))) || stored || { version: 0, decisions: {} } };
@@ -253,11 +290,12 @@ resolver.define('saveReview', async (req) => {
   try { await kvs.set(reviewKey(issue.id), review); } catch (e) { await kvs.delete(claim).catch(() => {}); throw e; }
   // the validator's verdict on the work item as it is now (a PDF attached since, an unread photo), for the JQL copy
   const verdict = verdictOf(issue.fields.attachment, review, notes);
+  await indexGate(issue.id, review, verdict);
   // every save is recorded: who, when, the verdict and which changes they signed (last 200 kept)
   try {
     const audit = (await kvs.get(auditKey(issue.id))) || [];
   audit.push({ at: now, by: me.accountId, name: me.displayName, version: review.version, status: gate.status, clouds: r.clouds?.length || 0, signed, ...(reread ? { reread: `${stored.engine} -> ${r.engine}, ${stored.clouds?.length || 0} -> ${r.clouds?.length || 0} changes` } : {}) });
-    await kvs.set(auditKey(issue.id), audit.slice(-200));
+    await kvs.set(auditKey(issue.id), fitAudit(audit));
   } catch (e) { console.warn('redline: review saved, audit entry not written'); }
   // searchable copy for JQL only; the validator, the gadget and Rovo recompute from app storage
   try {
@@ -322,7 +360,7 @@ resolver.define('addNote', async (req) => {
   const said = (list) => list.map((x) => `${x.n}:${noteKey(x.text)}`).join('|');
   if (req.payload?.expect != null && said(before) !== req.payload.expect) return { stale: true, notes: before };
   // claim the note number first: two adds at once can never both write note n
-  try { await kvs.set(`note:${issue.id}:${n}`, new Date().toISOString(), { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: 1, unit: 'HOURS' } }); }
+  try { await kvs.set(`note:${issue.id}:${n}`, new Date().toISOString(), { keyPolicy: 'FAIL_IF_EXISTS', ttl: { value: 2, unit: 'MINUTES' } }); }
   catch (e) { return { stale: true, notes: before }; }
   const item = { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] };
   const lists = (doc.content || []).filter((x) => x.type === 'orderedList');
@@ -332,17 +370,21 @@ resolver.define('addNote', async (req) => {
     if (!before.length) doc.content.push({ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Change notes' }] });
     doc.content.push({ type: 'orderedList', attrs: { order: n }, content: [item] });
   }
+  // read again just before writing: an edit made since the first read is never written over
+  const now2 = notesFromAdf((await (await jira(route`/rest/api/3/issue/${key}?fields=description`)).json()).fields.description);
+  if (said(now2) !== said(before)) { await kvs.delete(`note:${issue.id}:${n}`).catch(() => {}); return { stale: true, notes: now2 }; }
   try { await jira(route`/rest/api/3/issue/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { description: doc } }) }); }
   catch (e) { await kvs.delete(`note:${issue.id}:${n}`).catch(() => {}); throw e; } // nothing written: the number is free again
   // read it back: note n must be the words written here (an edit made in the same moment is reported, not hidden)
   const after = notesFromAdf((await (await jira(route`/rest/api/3/issue/${key}?fields=description`)).json()).fields.description);
-  if (noteKey(after.find((x) => x.n === n)?.text) !== noteKey(text)) return { stale: true, notes: after };
+  // every note must read as before plus the new one: an edit made in the same moment is reported, never silently undone
+  if (said(after) !== said([...before, { n, text }])) return { stale: true, notes: after };
   // who wrote which note in Redline, shown next to the note and to Rovo; and the audit log (a failure never undoes it)
   try {
     const me = await (await jira(route`/rest/api/3/myself`)).json();
     const audit = (await kvs.get(auditKey(issue.id))) || [];
     audit.push({ at: new Date().toISOString(), by: me.accountId, name: me.displayName, noteAdded: { n, text } });
-    await kvs.set(auditKey(issue.id), audit.slice(-200));
+    await kvs.set(auditKey(issue.id), fitAudit(audit));
     const written = (await kvs.get(`written:${issue.id}`)) || [];
     written.push({ n, text, by: me.displayName, byId: me.accountId, at: new Date().toISOString() });
     await kvs.set(`written:${issue.id}`, written.slice(-50));
@@ -439,34 +481,59 @@ export async function getDrawingReview(payload) {
 
 // Change orders Redline has reviewed, each with its verdict recomputed from app storage. The issue
 // property only narrows the search; a hand-edited property cannot make a held change order look clear.
-async function reviewedChangeOrders(projectKey) {
-  // every review Redline has stored, found by key in app storage (deleting or editing the issue property
-  // cannot hide a change order from this list)
-  const ids = [], stored = new Map();
+async function keysWith(prefix, max = 5000) { // every key and value under a prefix, a page at a time
+  const out = [];
   for (let cursor; ;) {
-    let q = kvs.query().where('key', WhereConditions.beginsWith('review:')).limit(100);
+    let q = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(100);
     if (cursor) q = q.cursor(cursor);
     const page = await q.getMany();
-    for (const x of page.results) { const id = x.key.slice('review:'.length); ids.push(id); stored.set(id, x.value); }
-    if (!page.nextCursor || ids.length >= 2000) break;
+    out.push(...page.results);
+    if (!page.nextCursor || out.length >= max) return out;
     cursor = page.nextCursor;
   }
-  if (!ids.length) return { items: [] };
+}
+
+// Reviews saved before the index existed are indexed once, as the app (so none is missed for want of permission).
+async function backfillIndex() {
+  if (await kvs.get('gate-index:v1').catch(() => null)) return;
+  const reviews = await keysWith('review:', 2000);
+  for (let k = 0; k < reviews.length; k += 100) {
+    const batch = reviews.slice(k, k + 100);
+    const res = await api.asApp().requestJira(route`/rest/api/3/issue/bulkfetch`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ issueIdsOrKeys: batch.map((x) => x.key.slice('review:'.length)), fields: ['attachment', 'description'] }),
+    });
+    if (!res.ok) return;
+    for (const i of (await res.json()).issues || []) {
+      const review = batch.find((x) => x.key === `review:${i.id}`)?.value;
+      let v;
+      try { v = verdictOf(i.fields.attachment, review, notesFromAdf(i.fields.description)); }
+      catch (e) { v = { blocked: true, text: 'Redline could not read this review; open the light table to compare again' }; }
+      await indexGate(i.id, review, v);
+    }
+  }
+  await kvs.set('gate-index:v1', new Date().toISOString());
+}
+
+async function reviewedChangeOrders(projectKey) {
+  // every change order Redline has a verdict for, found by key in app storage (deleting or editing the issue
+  // property cannot hide one from this list); only the work items this person can see are listed
+  await backfillIndex();
+  const gates = new Map((await keysWith('gate:')).map((x) => [x.key.slice('gate:'.length), x.value]));
+  if (!gates.size) return { items: [] };
+  const ids = [...gates.keys()];
   const project = projectKey ? `${String(projectKey).toUpperCase()}-` : null;
   const items = [];
   for (let k = 0; k < ids.length; k += 100) {
-    // bulk fetch answers for the ids it can see and lists the rest (deleted, or hidden from this user) as
-    // errors, so one missing work item never costs a request per item
+    // bulk fetch answers for the ids it can see and lists the rest (deleted, or hidden from this user) as errors
     const res = await api.asUser().requestJira(route`/rest/api/3/issue/bulkfetch`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ issueIdsOrKeys: ids.slice(k, k + 100), fields: ['summary', 'status', 'attachment', 'description', 'updated'] }),
+      body: JSON.stringify({ issueIdsOrKeys: ids.slice(k, k + 100), fields: ['summary', 'status', 'updated'] }),
     });
     if (!res.ok) continue;
-    const issues = ((await res.json()).issues || []).filter((i) => !project || i.key.startsWith(project));
-    for (const i of issues) {
-      const review = stored.get(String(i.id));
-      const v = verdictOf(i.fields.attachment, review, notesFromAdf(i.fields.description));
-      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!v.blocked, gate: v.text, reasons: (v.reasons || []).map((r) => ({ kind: r.kind, short: r.short })), since: review?.heldSince || review?.savedAt, updated: i.fields.updated });
+    for (const i of ((await res.json()).issues || []).filter((x) => !project || x.key.startsWith(project))) {
+      const g = gates.get(String(i.id));
+      items.push({ key: i.key, summary: i.fields.summary, status: i.fields.status?.name, blocked: !!g.blocked, gate: g.text, reasons: g.reasons || [], since: g.since, updated: i.fields.updated });
     }
   }
   items.sort((x, y) => Date.parse(y.updated || 0) - Date.parse(x.updated || 0));
@@ -495,6 +562,8 @@ export async function onIssueDeleted(event) {
   if (!id) return;
   await kvs.delete(reviewKey(id)).catch(() => {});
   await kvs.delete(auditKey(id)).catch(() => {});
+  await kvs.delete(`gate:${id}`).catch(() => {});
+  await kvs.delete(`written:${id}`).catch(() => {});
   // every sheet's thumbnail, however many sheets the drawing had
   for (let cursor; ;) {
     let q = kvs.query().where('key', WhereConditions.beginsWith(`thumb:${id}:`)).limit(100);
@@ -513,7 +582,7 @@ export async function onIssueUpdated(event) {
   if (!id) return;
   const review = await kvs.get(reviewKey(id));
   // with no review, only a new or removed attachment can change anything
-  if (!review && !fields.includes('attachment')) return;
+  if (!review && !(event.changelog?.items || []).some((i) => String(i.field || '').toLowerCase() === 'attachment' && /\.pdf$/i.test(`${i.fromString || ''}${i.toString || ''}`.trim()))) return;
   const res = await api.asApp().requestJira(route`/rest/api/3/issue/${id}?fields=attachment,description`);
   if (!res.ok) return;
   const issue = await res.json();
@@ -533,6 +602,7 @@ export async function onIssueUpdated(event) {
     return;
   }
   const v = verdictOf(issue.fields.attachment, review, notesFromAdf(issue.fields.description));
+  await indexGate(id, review, v);
   await api.asApp().requestJira(route`/rest/api/3/issue/${id}/properties/${PROP}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ gate: { status: v.blocked ? 'blocked' : 'clear', text: v.text, open: v.open || 0 }, revB: review.revB, version: review.version }),

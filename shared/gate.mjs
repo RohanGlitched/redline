@@ -111,14 +111,15 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
 // "rev" (any case, "revision" too) then a capital letter or two or a number, or a separator then any letter or two
 // ("rev-d"); an optional digit after the letter ("RevD1"); then optional words after a separator ("(released)",
 // "-signed"). Never part of a word: "review", "revs", "preview" and "drawing_rev.pdf" are not revisions.
-const REV = /(^|[^A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?(?:[-_ .]+([A-Za-z]{1,2}|\d{1,3})|([A-Z]{1,2}|\d{1,3}))(\d{0,2})((?:[-_ ]+\(?[A-Za-z0-9]+\)?)*)$/;
+// A sub-revision follows the letter directly or after "-" or "." ("RevD1", "Rev D-1", "rev-d.2").
+const REV = /(^|[^A-Za-z])[Rr][Ee][Vv](?:ision|ISION)?(?:[-_ .]+([A-Za-z]{1,2}|\d{1,4})|([A-Z]{1,2}|\d{1,4}))(?:[-.]?(\d{1,2}))?((?:[-_ ]+\(?[A-Za-z0-9]+\)?)*)$/;
 export function parseRevision(filename) {
   const base = String(filename || '').replace(/\.[a-z0-9]{2,4}$/i, '');
   const m = REV.exec(base);
   if (!m) return null;
   const t = m[2] ?? m[3];
   const drawing = base.slice(0, m.index + m[1].length).toLowerCase().replace(/[-_ .]+$/, '');
-  return { rev: /^\d+$/.test(t) ? String(+t) : t.toUpperCase(), sub: m[4] ? +m[4] : 0, drawing: drawing || null };
+  return { rev: /^\d+$/.test(t) ? String(+t) : t.toUpperCase(), sub: m[4] ? +m[4] : 0, extra: !!m[5], drawing: drawing || null };
 }
 
 // "BRKT-0142_rev-D.pdf" -> "rev D" (the file name itself when it names no revision)
@@ -138,7 +139,7 @@ export function revisionRank(filename) {
   const p = parseRevision(filename);
   if (!p) return null;
   if (/^\d+$/.test(p.rev)) return +p.rev * 100 + p.sub;
-  return 100000 + [...p.rev].reduce((v, ch) => v * 27 + (ch.charCodeAt(0) - 64), 0) * 100 + p.sub;
+  return 10000000 + [...p.rev].reduce((v, ch) => v * 27 + (ch.charCodeAt(0) - 64), 0) * 100 + p.sub;
 }
 
 export function drawingPdfs(attachments) {
@@ -151,7 +152,9 @@ export function drawingPdfs(attachments) {
   }
   // a drawing's revisions go in revision order: rev D attached before rev C is still compared C to D
   const withRevs = [...groups.values()].filter((g) => g.length >= 2)
-    .map((g) => [...g].sort((x, y) => (revisionRank(x.filename) ?? 0) - (revisionRank(y.filename) ?? 0) || byTime(x, y)));
+    // among copies of one revision the plain name is the revision itself ("rev-E.pdf", not "rev-E marked up.pdf")
+    .map((g) => [...g].sort((x, y) => (revisionRank(x.filename) ?? 0) - (revisionRank(y.filename) ?? 0)
+      || (parseRevision(y.filename)?.extra ? 1 : 0) - (parseRevision(x.filename)?.extra ? 1 : 0) || byTime(x, y)));
   if (withRevs.length > 1) return { pdfs: [], conflict: withRevs.length };
   return withRevs[0] ? { pdfs: withRevs[0], named: true } : { pdfs, named: false };
 }
@@ -161,7 +164,7 @@ export function drawingPdfs(attachments) {
 export function pairOf(pdfs, review) {
   // a later copy of the reviewed revision (same revision, another file) is not a new revision
   const reviewedB = review && pdfs.find((p) => +p.id === +review.revB?.id);
-  if (reviewedB && revisionRank(reviewedB.filename) != null) pdfs = pdfs.filter((p) => +p.id === +reviewedB.id || revisionRank(p.filename) !== revisionRank(reviewedB.filename));
+  if (reviewedB && revisionRank(reviewedB.filename) != null) pdfs = pdfs.filter((p) => +p.id === +reviewedB.id || +p.id === +review.revA?.id || revisionRank(p.filename) !== revisionRank(reviewedB.filename));
   const last = pdfs[pdfs.length - 1];
   if (!last) return [];
   const from = review && pdfs.find((p) => +p.id === +review.revB?.id);
@@ -189,9 +192,10 @@ export function unplacedPdfs(attachments, review) {
     const inChain = pdfs.some((p) => +p.id === +a.id);
     if (!inChain) return { ...a, why: 'is not named as a revision of this drawing and is not compared' };
     if (reviewedB && rank(a) != null && rank(a) === rank(reviewedB)) return { ...a, why: `is another copy of the reviewed ${revLabel(reviewedB.filename)}` };
+    if (pb && rank(a) != null && rank(a) === rank(pb)) return { ...a, why: `is another copy of ${revLabel(pb.filename)}, which is compared` };
     // covered: newer than the reviewed revision and older than the newest, so the comparison runs across it
     if (reviewedB && pb && rank(a) > rank(reviewedB) && rank(a) < rank(pb)) return null;
-    return { ...a, why: `is named as a revision older than the one reviewed (${revLabel(reviewedB?.filename)})` };
+    return { ...a, why: reviewedB ? `is named as a revision older than the one reviewed (${revLabel(reviewedB.filename)})` : 'is named as an older revision' };
   }).filter(Boolean);
 }
 
@@ -208,6 +212,7 @@ export function verdictOf(attachments, review, notes = null) {
   const unplaced = unplacedPdfs(attachments, review);
   if (unplaced.length) return { blocked: true, text: unplaced.map((a) => `${a.filename} ${a.why}`).join('; ') + '; set it aside on the light table if it is not a revision to compare' };
   const [a, b] = pairOf(pdfs, review);
+  if (!a || !b) return { blocked: true, text: 'Redline cannot tell which two revisions to compare; name each revision once' };
   if (+review.revB?.id !== +b.id) return { blocked: true, text: pdfs.some((p) => +p.id === +review.revB?.id) ? 'a newer drawing revision was attached after the last review' : 'the reviewed drawing revision was removed or replaced; compare the revisions again' };
   if (review.revA?.id && +review.revA.id !== +a.id) return { blocked: true, text: 'the review compared a different pair of revisions' };
   // the newest photo on the work item must be the print the review read (or set aside as not a print)

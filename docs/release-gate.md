@@ -41,10 +41,10 @@ What goes into a review is guarded too:
 
 - only someone who can edit the work item can save a review;
 - the name on a sign-off is the account that signed, as Jira reports it, not text sent by the browser;
-- for the same pair of revisions, a later save can add changes and compared sheets but cannot remove ones an earlier comparison found;
+- for the same pair of revisions, a later save can add changes and compared sheets but cannot remove ones an earlier comparison found, except a re-read by a newer Redline version, which replaces the list (decisions follow a change only if it still reads the same, and the audit log records the counts before and after);
 - every save is recorded with who, when, the verdict and which changes they signed.
 
-The comparison itself runs in the reviewer's browser, so a reviewer who can edit the work item and is set on cheating could submit a false first comparison from the browser's developer tools. The audit trail is there to make that visible.
+The comparison itself runs in the reviewer's browser, so a reviewer who can edit the work item and is set on cheating could submit a false first comparison, or a false re-read after a Redline upgrade, from the browser's developer tools. The audit trail is there to make that visible.
 
 Redline also writes a copy of the verdict to an issue property so JQL can search it. That copy is only an index: the validator, the dashboard gadget and the Rovo agent recompute the verdict from app storage, so editing the property through the REST API changes nothing they report.
 
