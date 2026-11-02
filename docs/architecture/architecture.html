@@ -1,0 +1,90 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Redline architecture</title>
+<style>
+@font-face { font-family: B612; src: url(../cover/B612-Regular.ttf); }
+@font-face { font-family: B612; font-weight: 700; src: url(../cover/B612-Bold.ttf); }
+:root { --ink: #1f2a44; --blue: #2c4a9a; --line: #9fb0d4; --grid: #dfe6ee; --paper: #f7f9fc; --red: #d0263a; --muted: #5a6680; }
+* { box-sizing: border-box; margin: 0; }
+body { width: 1200px; height: 780px; font-family: B612, sans-serif; color: var(--ink);
+  background: #e9eef4; background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px; position: relative; overflow: hidden; }
+.box { position: absolute; background: var(--paper); border: 2px solid var(--ink); padding: 14px 16px; }
+.box h3 { font-size: 19px; font-weight: 700; margin-bottom: 8px; }
+.box p, .box li { font-size: 15.5px; line-height: 1.38; color: var(--ink); }
+.box ul { padding-left: 0; list-style: none; }
+.box li { padding-left: 16px; position: relative; margin-bottom: 5px; }
+.box li::before { content: ''; position: absolute; left: 0; top: 8px; width: 7px; height: 7px; border: 1.5px solid var(--blue); }
+.sub { font-size: 13.5px !important; color: var(--muted) !important; }
+.zone { position: absolute; border: 2px dashed var(--blue); }
+.zlabel { position: absolute; font-size: 14px; color: var(--blue); background: #e9eef4; padding: 0 8px; font-weight: 700; }
+.step { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; font-size: 15.5px; line-height: 1.35; }
+.step b { flex: 0 0 22px; height: 22px; border: 1.5px solid var(--ink); border-radius: 50%; font-size: 12px; display: grid; place-items: center; }
+.verdict { position: absolute; background: var(--ink); color: #fff; padding: 12px 18px; font-size: 17px; }
+.verdict b { color: #ffd4d9; }
+.out { position: absolute; background: var(--paper); border: 2px solid var(--ink); padding: 11px 13px; width: 262px; }
+.out h4 { font-size: 16px; margin-bottom: 4px; }
+.out p { font-size: 14px; line-height: 1.35; color: var(--muted); }
+.out.gate { border-color: var(--red); box-shadow: 4px 4px 0 rgba(208,38,58,.18); }
+.out.gate h4 { color: var(--red); }
+.cloud { color: var(--red); font-weight: 700; }
+svg { position: absolute; inset: 0; pointer-events: none; }
+.title { position: absolute; left: 40px; top: 26px; font-size: 26px; font-weight: 700; }
+.title span { font-weight: 400; font-size: 17px; color: var(--muted); margin-left: 12px; }
+</style></head><body>
+<div class="title">Redline <span>how a change order is checked and held</span></div>
+
+<div class="zone" style="left:24px; top:76px; width:1152px; height:684px;"></div>
+<div class="zlabel" style="left:44px; top:66px;">Runs on Atlassian: no egress, no remote backend, no AI service. Drawings never leave Atlassian.</div>
+
+<div class="box" style="left:48px; top:112px; width:250px; height:282px;">
+  <h3>Change order in Jira</h3>
+  <ul>
+    <li>Rev C and rev D drawing PDFs, attached</li>
+    <li>A phone photo of the printed drawing with the machinist's red pen</li>
+    <li>Change notes in the description: "1. Zone D2: bore Ø25 becomes Ø25.5"</li>
+  </ul>
+</div>
+
+<div class="box" style="left:356px; top:112px; width:480px; height:282px;">
+  <h3>In the reviewer's browser <span class="sub">(Forge Custom UI)</span></h3>
+  <div class="step"><b>1</b><span>pdf.js renders both revisions and reads their text</span></div>
+  <div class="step"><b>2</b><span>Register rev D onto rev C, diff the line work, <span class="cloud">cloud each change</span> with its drawing zone</span></div>
+  <div class="step"><b>3</b><span>Match each change to a numbered note; check the values both ways; check the title-block revision letter</span></div>
+  <div class="step"><b>4</b><span>Flatten the photo onto rev D and separate pen red from printed red</span></div>
+  <p class="sub" style="margin-top:6px">Plain JavaScript engine, no dependencies. A person declares, answers and signs off each line.</p>
+</div>
+
+<div class="box" style="left:894px; top:112px; width:258px; height:282px;">
+  <h3>Forge functions</h3>
+  <ul>
+    <li>Save the review: signers named by Jira, never drops a change found earlier, audited</li>
+    <li>Write a missing note into the description</li>
+    <li>Raise a pen markup as a work item</li>
+  </ul>
+  <p class="sub" style="margin-top:4px">Triggers keep the index current and clean up on delete.</p>
+</div>
+
+<div class="box" style="left:894px; top:436px; width:258px; height:104px;">
+  <h3>Forge app storage</h3>
+  <p class="sub">Review, audit log, verdict index (KVS)</p>
+</div>
+
+<div class="verdict" style="left:48px; top:450px; width:788px;">One verdict, <b>shared/gate.mjs</b>, computed the same way in the browser and in every Forge function below</div>
+
+<div class="out gate" style="left:48px; top:560px; height:172px;"><h4>Release gate</h4><p>A workflow validator refuses the release transition until every change is declared, matched, signed off and every markup answered. It reads app storage and fails closed.</p></div>
+<div class="out" style="left:326px; top:560px; height:172px;"><h4>Dashboard gadget</h4><p>The change orders Redline is holding, why, and since when.</p><h4 style="margin-top:10px">JQL</h4><p>redlineGate = "blocked", from an entity property.</p></div>
+<div class="out" style="left:604px; top:560px; height:172px; width:232px;"><h4>Rovo agent</h4><p>Drawing change checker, with two actions: get one change order's review; list the change orders held.</p></div>
+
+<svg viewBox="0 0 1200 780">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1f2a44"/></marker></defs>
+  <g stroke="#1f2a44" stroke-width="2.2" fill="none" marker-end="url(#a)">
+    <path d="M298 250 H352"/>
+    <path d="M836 250 H890"/>
+    <path d="M1023 394 V432"/>
+    <path d="M894 488 H840"/>
+    <path d="M178 498 V556"/>
+    <path d="M456 498 V556"/>
+    <path d="M720 498 V556"/>
+  </g>
+</svg>
+</body></html>
