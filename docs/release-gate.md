@@ -9,7 +9,7 @@ Redline adds a workflow validator called **Redline drawing release gate**. Put i
 - every numbered change note is carried out by a change on the drawing, or someone has said by name that it needs no drawing change;
 - a review that found nothing, or that set line work aside as re-plot shifts, has been confirmed by name;
 - the newest photo of a marked-up print has been read on the light table (or set aside as not a print), and every red-pen markup on it, and any still unanswered on an earlier photo that is still attached, is raised as a work item, covered by a change, or dismissed;
-- any PDF attached after the reviewed revision that is not named as a revision of this drawing has been set aside by name (a real new revision should be named like the others, so Redline compares it);
+- any PDF attached after the review was saved that the comparison does not cover has been set aside by name: a file not named as a revision of this drawing, another copy of the reviewed revision, or one named as an older revision (a real new revision should be named like the others, so Redline compares it; a revision between the last reviewed one and the newest is covered by that comparison);
 - only one drawing's revisions are attached: two different drawings, each with revisions, belong on two change orders;
 - when a further revision arrives (rev E after a review of C to D), every change that review sent back or left unanswered is carried into the next review (from the last reviewed revision to the newest, so two revisions attached at once are never skipped) and holds the release until someone says, by name, that the new revision fixes it.
 
@@ -59,6 +59,8 @@ Redline reads numbered lines in the work item description and links a change to 
 
 Zones follow the ASME drawing border: columns numbered from the right, rows lettered from the bottom. A note claims a change by itself only when that change is the only one in the named zone. If a zone holds two changes, or the change sits one zone over, Redline suggests the note and a person confirms it. That way an undeclared edit cannot hide behind a declared one beside it.
 
+A change no note describes can be written up from the light table: Redline drafts the note from what it read ("Zone C3: moved 3 mm right and down"), you edit the words, and **Add to the change notes** appends it as the next numbered note in the description. The note is marked "written in Redline by" its author in the light table, the issue panel and the Rovo agent's answers, and the audit log records it; the change still needs signing off, and the panel shows when the person who wrote the note also signed it.
+
 ## Find blocked change orders
 
 | JQL | Finds |
@@ -75,7 +77,7 @@ Redline reads the work item, its attachments and its description as the person u
 
 ## When the drawings live in a PDM or PLM vault
 
-Redline needs the released PDFs on the change order, named as revisions of one drawing (for example `BRKT-0142_rev-C.pdf` and `BRKT-0142_rev-D.pdf`; "Rev D", "rev-d" and "RevD1" read the same). Teams whose CAD lives in SolidWorks PDM, Autodesk Vault or a PLM usually already publish a PDF when a revision is released. Two ways to get it onto the change order without anyone downloading and re-uploading:
+Redline needs the released PDFs on the change order, named as revisions of one drawing (for example `BRKT-0142_rev-C.pdf` and `BRKT-0142_rev-D.pdf`; "Rev D" and "rev-d" read the same, and "RevD1" is sub-revision D1, after D). Teams whose CAD lives in SolidWorks PDM, Autodesk Vault or a PLM usually already publish a PDF when a revision is released. Two ways to get it onto the change order without anyone downloading and re-uploading:
 
 - **Email:** where the project accepts email (a Jira Service Management channel, or an incoming-mail handler if your site has one set up), the vault's release notification can mail the PDF with the change order's key in the subject so Jira adds it to that work item. Check this on your site first; the script below works everywhere.
 - **A small publish script (works on any site):** the vault's release step calls Jira's REST attachments endpoint (`POST /rest/api/3/issue/{key}/attachments`) with the PDF and the change order's key. Two ready-made ones are in `tools/`: `publish-revision.sh` and `publish-revision.ps1` (they read `JIRA_EMAIL` and `JIRA_API_TOKEN` from the environment). Jira Automation's built-in actions do not attach files, so a script or email is the dependable route.
