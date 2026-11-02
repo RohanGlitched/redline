@@ -55,7 +55,8 @@ export function gateOf(clouds, decisions = {}, marks = [], markDecisions = {}, s
     else if (!d.signedBy) unsigned++;
   }
   // a pen markup from the floor needs an answer too: raised as a work item, covered by a change, or dismissed
-  const markups = marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status)).length;
+  // (a markup raised as a work item Jira could not confirm yet is not answered until the next save checks it)
+  const markups = marks.filter((m) => !['raised', 'covered', 'dismissed'].includes(markDecisions[m.id]?.status) || markDecisions[m.id]?.unchecked).length;
   // every sheet of a multi-sheet drawing has to be compared before release
   const unseen = sheets && sheets.count > 1 ? sheets.count - new Set(sheets.done || []).size : 0;
   // every numbered note is carried out on the drawing, or a named person says it needs no drawing change

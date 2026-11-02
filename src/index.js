@@ -222,13 +222,27 @@ resolver.define('saveReview', async (req) => {
   }
   // a markup newly answered as raised names a work item this person can see, or it is not raised: one bulk lookup;
   // only a malformed key or one Jira does not find is refused (a busy or failing Jira never undoes a real answer)
-  const newlyRaised = Object.entries(r.markDecisions || {}).filter(([id, m]) => m.status === 'raised' && !(stored?.markDecisions?.[id]?.status === 'raised' && stored.markDecisions[id].key === m.key));
-  for (const [id, m] of newlyRaised) if (!/^[A-Z][A-Z0-9_]+-\d+$/.test(String(m.key || ''))) r.markDecisions[id] = { status: 'open' };
-  const toLook = [...new Set(newlyRaised.map(([, m]) => m.key).filter((k) => /^[A-Z][A-Z0-9_]+-\d+$/.test(String(k || ''))))];
-  if (toLook.length) {
-    const found = await jira(route`/rest/api/3/issue/bulkfetch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issueIdsOrKeys: toLook.slice(0, 100), fields: ['summary'] }) })
-      .then((x) => x.json()).then((b) => new Set((b.issues || []).map((i) => i.key))).catch(() => null);
-    if (found) for (const [id, m] of newlyRaised) if (toLook.slice(0, 100).includes(m.key) && !found.has(m.key)) r.markDecisions[id] = { status: 'open' };
+  r.markDecisions = Object.fromEntries(Object.entries(r.markDecisions || {}).filter(([, m]) => m && typeof m === 'object'));
+  // (an answer whose lookup could not be made is checked again on the next save, never trusted for good)
+  const newlyRaised = Object.entries(r.markDecisions).filter(([id, m]) => m.status === 'raised' && (m.unchecked || !(stored?.markDecisions?.[id]?.status === 'raised' && !stored.markDecisions[id].unchecked && stored.markDecisions[id].key === m.key)));
+  const KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
+  for (const [id, m] of newlyRaised) if (!KEY.test(String(m.key || ''))) r.markDecisions[id] = { status: 'open' };
+  const toLook = [...new Set(newlyRaised.map(([, m]) => m.key).filter((k) => KEY.test(String(k || ''))))];
+  const missing = new Set(), unchecked = new Set();
+  for (let k = 0; k < toLook.length; k += 100) {
+    const batch = toLook.slice(k, k + 100);
+    const body = await jira(route`/rest/api/3/issue/bulkfetch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issueIdsOrKeys: batch, fields: ['summary'] }) })
+      .then((x) => x.json()).catch(() => null);
+    if (!body) { batch.forEach((x) => unchecked.add(x)); continue; }
+    // a key Jira names as not found is refused; a work item moved since comes back under its new key and still counts
+    const errs = new Set((body.issueErrors || []).flatMap((e) => e.issueIdsOrKeys || []));
+    const found = new Set((body.issues || []).map((x) => x.key));
+    for (const x of batch) if (errs.size ? errs.has(x) : !found.has(x) && (body.issues || []).length < batch.length) missing.add(x);
+  }
+  for (const [id, m] of newlyRaised) {
+    if (missing.has(m.key)) r.markDecisions[id] = { status: 'open' };
+    else if (unchecked.has(m.key)) r.markDecisions[id] = { ...m, unchecked: true };
+    else if (r.markDecisions[id]?.unchecked) { const { unchecked: _, ...rest } = r.markDecisions[id]; r.markDecisions[id] = rest; }
   }
   const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes, { setAside: (r.setAside || []).length, notesDone: r.notesDone });
   // who answered each pen markup, and who set a photo aside, as Jira names them

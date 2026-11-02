@@ -825,7 +825,7 @@ function Ledger({ earlierMarks = [], onAddNote = null, res, order, decisions, se
           {!order.notes.length && <li className="none">The work item has no numbered change notes. Number each change in the description, for example "1. Zone D3: bore Ø25 to Ø25.5".</li>}
         </ol>
       </section>
-      <NeedsYou res={res} all={allClouds} notes={order.notes} decisions={decisions} marks={marks} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} clear={gate && !gate.blocked} />
+      <NeedsYou res={res} all={allClouds} notes={order.notes} decisions={decisions} marks={[...marks, ...earlierMarks]} markDecisions={markDecisions} sel={sel} onSelect={onSelect} readOnly={order.canEdit === false} clear={gate && !gate.blocked} />
       <section className="rl-found">
         <h2>Found on the sheet <span>{res.clouds.length}</span></h2>
         <ul>
