@@ -220,6 +220,16 @@ resolver.define('saveReview', async (req) => {
     const kept = (stored.marks || []).filter((m) => photoOf(m) === +r.print?.id || !answered(m));
     Object.assign(r, keepEarlierMarks({ ...stored, marks: kept }, r.marks, r.markDecisions, stillAttached));
   }
+  // a markup newly answered as raised names a work item this person can see, or it is not raised: one bulk lookup;
+  // only a malformed key or one Jira does not find is refused (a busy or failing Jira never undoes a real answer)
+  const newlyRaised = Object.entries(r.markDecisions || {}).filter(([id, m]) => m.status === 'raised' && !(stored?.markDecisions?.[id]?.status === 'raised' && stored.markDecisions[id].key === m.key));
+  for (const [id, m] of newlyRaised) if (!/^[A-Z][A-Z0-9_]+-\d+$/.test(String(m.key || ''))) r.markDecisions[id] = { status: 'open' };
+  const toLook = [...new Set(newlyRaised.map(([, m]) => m.key).filter((k) => /^[A-Z][A-Z0-9_]+-\d+$/.test(String(k || ''))))];
+  if (toLook.length) {
+    const found = await jira(route`/rest/api/3/issue/bulkfetch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issueIdsOrKeys: toLook.slice(0, 100), fields: ['summary'] }) })
+      .then((x) => x.json()).then((b) => new Set((b.issues || []).map((i) => i.key))).catch(() => null);
+    if (found) for (const [id, m] of newlyRaised) if (toLook.slice(0, 100).includes(m.key) && !found.has(m.key)) r.markDecisions[id] = { status: 'open' };
+  }
   const gate = gateOf(r.clouds || [], r.decisions || {}, r.marks || [], r.markDecisions || {}, r.sheets, notes, { setAside: (r.setAside || []).length, notesDone: r.notesDone });
   // who answered each pen markup, and who set a photo aside, as Jira names them
   for (const [id, m] of Object.entries(r.markDecisions || {})) {
@@ -233,12 +243,6 @@ resolver.define('saveReview', async (req) => {
     // the whole answer is kept with its author (a raised markup keeps the work item that author raised)
     if (m.status && m.status !== 'open' && was?.status === m.status && (was.key ?? null) === (m.key ?? null)) { m.by = was.by; m.byId = was.byId; m.at = was.at; }
     else if (m.status && m.status !== 'open') { m.by = me.displayName; m.byId = me.accountId; m.at = now; }
-  }
-  // a markup newly answered as raised names a work item this person can see, or it is not raised
-  for (const [id, m] of Object.entries(r.markDecisions || {})) {
-    if (m.status !== 'raised' || (stored?.markDecisions?.[id]?.status === 'raised' && stored.markDecisions[id].key === m.key)) continue;
-    const ok = /^[A-Z][A-Z0-9_]+-\d+$/.test(String(m.key || '')) && (await jira(route`/rest/api/3/issue/${m.key}?fields=summary`).then((x) => x.status !== 404).catch(() => false));
-    if (!ok) r.markDecisions[id] = { status: 'open' };
   }
   if (r.print?.setAside) r.print = +stored?.print?.id === +r.print.id && stored.print.setAside ? stored.print : { ...r.print, by: me.displayName, byId: me.accountId, at: now };
   // "held since": when this review's gate last went from clear (or new) to blocked
