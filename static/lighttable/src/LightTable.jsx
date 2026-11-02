@@ -21,8 +21,8 @@ const kindText = (c) => (c.kind === 'titleBlock' ? `Title block reads Rev ${c.ti
   : c.countedBack ? 'Set aside by Redline as a re-plot shift, counted back in by the reviewer'
   : c.textOnly && c.housekeeping !== 'stamp' ? 'Text changed (too small a change to show in the line work)' : c.housekeeping === 'stamp' ? 'Plot stamp: date, file or tool version'
   : c.move ? `Moved ${c.move.mm} mm${c.move.dir ? ` ${c.move.dir}` : ''}${c.housekeeping ? ', otherwise unchanged' : ''}`
-  // a change whose ink is words on the drawing says so, with the words
-  : c.after && !c.before && c.kind !== 'removed' ? `Text added: "${c.after}"` : c.before && !c.after && c.kind !== 'added' ? `Text removed: "${c.before}"`
+  // a change whose ink is words on the drawing says so (the words themselves are shown under it)
+  : c.after && !c.before && c.kind !== 'removed' ? 'Text added' : c.before && !c.after && c.kind !== 'added' ? 'Text removed'
   : KIND_TEXT[c.kind]);
 const KIND_TEXT = { added: 'New line work', removed: 'Line work removed', changed: 'Line work changed', sheetAdded: 'Whole sheet added in this revision', sheetRemoved: 'Whole sheet removed in this revision' };
 const reduceMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
